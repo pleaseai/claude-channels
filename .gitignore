@@ -1,0 +1,13 @@
+# IDE
+.idea/
+*.iml
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
