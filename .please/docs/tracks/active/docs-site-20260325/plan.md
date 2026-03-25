@@ -107,19 +107,23 @@ Docus was chosen because it provides a complete documentation solution (navigati
 ## Outcomes & Retrospective
 
 ### What Was Shipped
+
 - Docus documentation site at `apps/docs` with landing page and Getting Started guide
 - Static generation via `nuxt generate` producing Cloudflare Pages compatible output
 - Developer gotchas documented in `apps/docs/CLAUDE.md`
 
 ### What Went Well
+
 - Docus provides excellent out-of-box documentation features (nav, search, dark mode)
 - Build produces clean static HTML suitable for any static hosting
 - Review cycle caught documentation inaccuracies (pairing flow, MCP path)
 
 ### What Could Improve
+
 - Bun/Docus incompatibility cost significant debugging time; should research tooling compatibility earlier
 - ESLint markdown formatter breaking MDC syntax was unexpected; need to exclude content dirs from formatters upfront
 
 ### Tech Debt Created
+
 - `apps/docs` is not part of Bun workspaces or Turborepo pipeline — manual `cd apps/docs && npm run build` required
 - `@nuxt/devalue` added as explicit dependency to work around transitive resolution issue (may be fixed upstream)
