@@ -12,7 +12,7 @@ claude-channels is a collection of channel plugins that bridge external chat pla
 ## Core Features
 
 - **Two-way messaging** — Receive messages from chat platforms and reply back through the same channel
-- **Sender allowlist with pairing** — Security-first access control via pairing codes
+- **Thread-bound sessions** — Each session creates a dedicated Slack thread for isolated communication
 - **Multi-platform support** — Pluggable architecture for Slack, Line, and future platforms
 - **Local-first** — Runs as a local subprocess with no public endpoints required
 - **File attachments** — Send and receive files through the channel

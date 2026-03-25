@@ -21,12 +21,14 @@ The current Slack plugin (`plugins/slack/server.ts`, ~890 lines) supports multi-
 The thread-bound model eliminates the need for `access.json`, pairing codes, approval polling, and channel gating. Instead, the server creates a new thread at startup in a channel specified by `SLACK_CHANNEL_ID`, and all inbound/outbound messages are scoped to that thread. The thread itself becomes the access boundary.
 
 Key constraints:
+
 - Single-file MCP server architecture must be maintained
 - State files remain in `~/.claude/channels/slack/`
 - Socket Mode connection is shared; thread filtering handles message isolation
 - `SLACK_CHANNEL_ID` is required (no fallback to unbound mode)
 
 Non-goals:
+
 - Preserving backward compatibility with the current unbound/pairing model
 - DM support
 - Multi-thread binding
@@ -38,6 +40,7 @@ The chosen approach is a **simplification rewrite** of `server.ts`. Rather than 
 Rationale: The existing access control (~300 lines) is designed for a fundamentally different use case (multi-channel, multi-user). Keeping it alongside thread-binding would create dead code paths and confusing configuration. A clean replacement is safer and more maintainable.
 
 The thread lifecycle:
+
 1. Server starts → `web.chat.postMessage({ channel: SLACK_CHANNEL_ID })` → store `ts` as `boundThreadTs`
 2. Inbound: Only accept messages where `msg.thread_ts === boundThreadTs`
 3. Outbound: All reply/react/edit operations target `boundThreadTs` channel + thread
@@ -45,12 +48,12 @@ The thread lifecycle:
 
 ## Tasks
 
-- [ ] T001 Strip access control and add thread binding core (file: plugins/slack/server.ts)
-- [ ] T002 Implement thread-scoped inbound filtering (file: plugins/slack/server.ts, depends on T001)
-- [ ] T003 Implement thread-forced outbound tools (file: plugins/slack/server.ts, depends on T001)
-- [ ] T004 Update MCP instructions and tool descriptions (file: plugins/slack/server.ts, depends on T002, T003)
-- [ ] T005 Add startup validation and error handling (file: plugins/slack/server.ts, depends on T001)
-- [ ] T006 Update tests for thread-bound behavior (file: plugins/slack/__tests__/, depends on T002, T003, T005)
+- [x] T001 Strip access control and add thread binding core (file: plugins/slack/server.ts)
+- [x] T002 Implement thread-scoped inbound filtering (file: plugins/slack/server.ts, depends on T001)
+- [x] T003 Implement thread-forced outbound tools (file: plugins/slack/server.ts, depends on T001)
+- [x] T004 Update MCP instructions and tool descriptions (file: plugins/slack/server.ts, depends on T002, T003)
+- [x] T005 Add startup validation and error handling (file: plugins/slack/server.ts, depends on T001)
+- [x] T006 Update tests for thread-bound behavior (file: plugins/slack/server.test.ts, depends on T002, T003, T005)
 
 ## Key Files
 
@@ -93,6 +96,16 @@ The thread lifecycle:
 - [ ] Post in thread → message appears in Claude Code session
 - [ ] Post in channel (not thread) → no message delivered
 - [ ] Start two sessions → two separate threads, no cross-talk
+
+## Progress
+
+- [x] (2026-03-25 12:42 KST) T001 Strip access control and add thread binding core
+- [x] (2026-03-25 12:42 KST) T002 Implement thread-scoped inbound filtering
+- [x] (2026-03-25 12:42 KST) T003 Implement thread-forced outbound tools
+- [x] (2026-03-25 12:42 KST) T004 Update MCP instructions and tool descriptions
+- [x] (2026-03-25 12:42 KST) T005 Add startup validation and error handling
+- [x] (2026-03-25 12:42 KST) T006 Update tests for thread-bound behavior
+  Evidence: `bunx bun test plugins/slack/server.test.ts` → 20 tests passed (30ms)
 
 ## Decision Log
 
