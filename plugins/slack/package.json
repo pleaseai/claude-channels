@@ -5,6 +5,7 @@
   "license": "MIT",
   "bin": "./server.ts",
   "scripts": {
+    "dev": "bun server.ts",
     "start": "bun install --no-summary && bun server.ts"
   },
   "dependencies": {

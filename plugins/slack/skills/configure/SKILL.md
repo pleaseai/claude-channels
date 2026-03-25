@@ -12,7 +12,8 @@ allowed-tools:
 # /slack:configure — Slack Channel Setup
 
 Writes the bot token and app token to `~/.claude/channels/slack/.env` and
-orients the user on access policy. The server reads both files at boot.
+orients the user on access policy. The server reads `.env` once at boot;
+`access.json` is re-read on every inbound message.
 
 Arguments passed: `$ARGUMENTS`
 

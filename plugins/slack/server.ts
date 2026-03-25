@@ -742,11 +742,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             const threadResult = await web.conversations.replies({
               channel: chatId,
               ts: messageTs,
-              latest: messageTs,
-              inclusive: true,
-              limit: 1,
             })
-            msg = threadResult.messages?.[0]
+            msg = threadResult.messages?.find(m => m.ts === messageTs)
           }
           catch { /* thread lookup failed — use original result */ }
         }

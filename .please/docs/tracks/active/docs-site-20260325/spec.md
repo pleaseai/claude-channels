@@ -51,4 +51,4 @@ Create a documentation site for the claude-channels project at `apps/docs` using
 - Docus installed as a Nuxt layer via `extends: ['docus']` in `nuxt.config.ts`
 - Cloudflare Pages Git integration handles auto-deployment on push to main
 - Documentation content uses Markdown/MDC format
-- npm used as package manager for Docus compatibility (or bun if compatible)
+- Bun used as package manager; npm only if Docus is incompatible with Bun
