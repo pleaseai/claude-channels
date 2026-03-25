@@ -67,7 +67,10 @@ try {
       process.env[m[1]] = m[2]
   }
 }
-catch { /* .env may not exist yet */ }
+catch (err) {
+  if ((err as NodeJS.ErrnoException).code !== 'ENOENT')
+    process.stderr.write(`slack channel: failed to read ${ENV_FILE}: ${err}\n`)
+}
 
 const BOT_TOKEN = process.env.SLACK_BOT_TOKEN
 const APP_TOKEN = process.env.SLACK_APP_TOKEN
@@ -141,7 +144,12 @@ function assertSendable(f: string): void {
     real = realpathSync(f)
     stateReal = realpathSync(STATE_DIR)
   }
-  catch { return }
+  catch (err) {
+    // File doesn't exist — can't be a state file, let statSync handle it later
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT')
+      return
+    throw new Error(`cannot verify file is safe to send: ${f}: ${err}`)
+  }
   const inbox = join(stateReal, 'inbox')
   if (real.startsWith(stateReal + sep) && !real.startsWith(inbox + sep)) {
     throw new Error(`refusing to send channel state: ${f}`)
@@ -170,7 +178,9 @@ function readAccessFile(): Access {
     try {
       renameSync(ACCESS_FILE, `${ACCESS_FILE}.corrupt-${Date.now()}`)
     }
-    catch { /* ignore */ }
+    catch (renameErr) {
+      process.stderr.write(`slack: could not move corrupt access.json aside: ${renameErr}\n`)
+    }
     process.stderr.write('slack: access.json is corrupt, moved aside. Starting fresh.\n')
     return defaultAccess()
   }
@@ -331,7 +341,9 @@ function isMentioned(msg: SlackMessage, extraPatterns?: string[]): boolean {
       if (new RegExp(pat, 'i').test(text))
         return true
     }
-    catch { /* invalid regex — skip */ }
+    catch (err) {
+      process.stderr.write(`slack channel: invalid mentionPattern "${pat}": ${err}\n`)
+    }
   }
   return false
 }
@@ -345,7 +357,11 @@ function checkApprovals(): void {
   try {
     files = readdirSync(APPROVED_DIR)
   }
-  catch { return }
+  catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT')
+      process.stderr.write(`slack channel: cannot read approved dir: ${err}\n`)
+    return
+  }
   if (files.length === 0)
     return
 
@@ -415,22 +431,24 @@ function chunk(text: string, limit: number, mode: 'length' | 'newline'): string[
 async function assertAllowedChannel(channelId: string): Promise<void> {
   const access = loadAccess()
   // Check if it's a DM with an allowlisted user
+  let info
   try {
-    const info = await web.conversations.info({ channel: channelId })
-    const ch = info.channel as Record<string, unknown> | undefined
-    if (ch?.is_im) {
-      // DM — check if the user is allowlisted
-      const userId = ch.user as string | undefined
-      if (userId && access.allowFrom.includes(userId))
-        return
-    }
-    else {
-      // Channel — check if it's in groups
-      if (channelId in access.groups)
-        return
-    }
+    info = await web.conversations.info({ channel: channelId })
   }
-  catch { /* channel info failed — fall through to reject */ }
+  catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`cannot verify channel ${channelId} — Slack API error: ${msg}`)
+  }
+  const ch = info.channel as Record<string, unknown> | undefined
+  if (ch?.is_im) {
+    const userId = ch.user as string | undefined
+    if (userId && access.allowFrom.includes(userId))
+      return
+  }
+  else {
+    if (channelId in access.groups)
+      return
+  }
   throw new Error(`channel ${channelId} is not allowlisted — add via /slack:access`)
 }
 
@@ -830,7 +848,9 @@ async function handleInbound(msg: SlackMessage): Promise<void> {
       channel: chatId,
       timestamp: msg.ts,
       name: access.ackReaction,
-    }).catch(() => { /* fire-and-forget */ })
+    }).catch((err) => {
+      process.stderr.write(`slack channel: ack reaction failed: ${err}\n`)
+    })
   }
 
   // List attachments in meta without downloading
@@ -844,7 +864,7 @@ async function handleInbound(msg: SlackMessage): Promise<void> {
 
   const content = msg.text || (atts.length > 0 ? '(attachment)' : '')
 
-  void mcp.notification({
+  mcp.notification({
     method: 'notifications/claude/channel',
     params: {
       content,
@@ -857,6 +877,8 @@ async function handleInbound(msg: SlackMessage): Promise<void> {
         ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
       },
     },
+  }).catch((err) => {
+    process.stderr.write(`slack channel: failed to deliver message from ${msg.user} in ${chatId}: ${err}\n`)
   })
 }
 
