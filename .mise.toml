@@ -4,7 +4,12 @@ node = "24"
 
 [tasks.pre-commit]
 description = "Lint staged files"
-run = "bun run lint"
+run = """
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.json')
+if [ -n "$STAGED" ]; then
+  echo "$STAGED" | xargs bunx eslint --cache
+fi
+"""
 
 [tasks.commit-msg]
 description = "Validate commit message"
