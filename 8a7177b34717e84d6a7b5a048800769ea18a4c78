@@ -1,0 +1,41 @@
+apps/docs/nuxt.config.ts
+  cea7fa5adffbc5d0 1-5
+.please/docs/tracks/active/docs-site-20260325/plan.md
+  cea7fa5adffbc5d0 37-44
+.please/docs/tracks/index.md
+  cea7fa5adffbc5d0 10
+.gitignore
+  cea7fa5adffbc5d0 25-26
+apps/docs/turbo.json
+  cea7fa5adffbc5d0 1-9
+.please/docs/tracks/active/docs-site-20260325/metadata.json
+  cea7fa5adffbc5d0 4,6
+apps/docs/content/index.md
+  cea7fa5adffbc5d0 1-54
+apps/docs/app.config.ts
+  cea7fa5adffbc5d0 1-20
+apps/docs/content/1.getting-started/1.introduction.md
+  cea7fa5adffbc5d0 1-79
+apps/docs/package.json
+  cea7fa5adffbc5d0 1-11,13-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "8a7177b34717e84d6a7b5a048800769ea18a4c78",
+  "prompts": {
+    "cea7fa5adffbc5d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2991c633-a1ec-417a-b3cd-93ddf3a626dc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 1265,
+      "total_deletions": 89,
+      "accepted_lines": 1188,
+      "overriden_lines": 0
+    }
+  }
+}
