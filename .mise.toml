@@ -5,7 +5,7 @@ node = "24"
 [tasks.pre-commit]
 description = "Lint staged files"
 run = """
-git diff --cached --name-only -z --diff-filter=ACMR -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.json' | xargs -0 bunx eslint --cache --
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.json' | xargs -0 sh -c '[ "$#" -eq 0 ] || bunx eslint --cache -- "$@"' _
 """
 
 [tasks.commit-msg]
