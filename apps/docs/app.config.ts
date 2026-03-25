@@ -1,3 +1,5 @@
+const GITHUB_URL = 'https://github.com/pleaseai/claude-channels'
+
 export default defineAppConfig({
   header: {
     title: 'claude-channels',
@@ -7,10 +9,10 @@ export default defineAppConfig({
     description: 'Bridge chat platforms with Claude Code sessions via MCP channel plugins.',
   },
   socials: {
-    github: 'https://github.com/pleaseai/claude-channels',
+    github: GITHUB_URL,
   },
   github: {
-    url: 'https://github.com/pleaseai/claude-channels',
+    url: GITHUB_URL,
     branch: 'main',
     rootDir: 'apps/docs',
   },

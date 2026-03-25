@@ -28,7 +28,7 @@ The `apps/docs` package is intentionally excluded from the root `package.json` w
 
 ### Nuxt build artifacts
 
-Build output goes to `.output/public/` (not `dist/`). The package-level `turbo.json` overrides the root config's `dist/**` output to `.output/public/**`.
+Build output goes to `.output/public/` (not `dist/`).
 
 ### Content file naming
 
