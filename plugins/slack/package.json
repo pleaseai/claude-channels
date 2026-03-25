@@ -1,0 +1,15 @@
+{
+  "name": "claude-channel-slack",
+  "type": "module",
+  "version": "0.0.1",
+  "license": "MIT",
+  "bin": "./server.ts",
+  "scripts": {
+    "start": "bun install --no-summary && bun server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@slack/socket-mode": "^2.0.6",
+    "@slack/web-api": "^7.15.0"
+  }
+}
