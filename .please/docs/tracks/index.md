@@ -8,7 +8,7 @@
 | ---------------------------------------------------------------------- | -------------------- | ------- | ----- | ---------- | ----------- |
 | [slack-channel-plugin-20260325](active/slack-channel-plugin-20260325/) | Slack Channel Plugin | feature |       | 2026-03-25 | in_progress |
 | [docs-site-20260325](active/docs-site-20260325/)                       | Documentation Site   | feature |       | 2026-03-25 | planned     |
-| [thread-bound-session-20260325](active/thread-bound-session-20260325/) | Thread-Bound Session | feature |       | 2026-03-25 | planned     |
+| [thread-bound-session-20260325](active/thread-bound-session-20260325/) | Thread-Bound Session | feature |       | 2026-03-25 | in_progress |
 
 ## Recently Completed
 
