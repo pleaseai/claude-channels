@@ -34,14 +34,14 @@ Docus was chosen because it provides a complete documentation solution (navigati
 
 ## Tasks
 
-- [ ] T001 Add `apps/*` to root workspace configuration (file: package.json)
-- [ ] T002 Initialize Docus project in apps/docs (file: apps/docs/package.json)
-- [ ] T003 Configure Docus app config with project metadata (file: apps/docs/app.config.ts) (depends on T002)
-- [ ] T004 Configure Nuxt for static generation and Cloudflare Pages (file: apps/docs/nuxt.config.ts) (depends on T002)
-- [ ] T005 Create index landing page content (file: apps/docs/content/index.md) (depends on T002)
-- [ ] T006 Create Getting Started guide content (file: apps/docs/content/1.getting-started/1.introduction.md) (depends on T002)
-- [ ] T007 Add Turborepo build config for docs package (file: apps/docs/turbo.json) (depends on T002)
-- [ ] T008 Verify build output and dev server work (depends on T001, T002, T003, T004, T005, T006, T007)
+- [x] T001 Add `apps/*` to root workspace configuration (file: package.json)
+- [x] T002 Initialize Docus project in apps/docs (file: apps/docs/package.json)
+- [x] T003 Configure Docus app config with project metadata (file: apps/docs/app.config.ts) (depends on T002)
+- [x] T004 Configure Nuxt for static generation and Cloudflare Pages (file: apps/docs/nuxt.config.ts) (depends on T002)
+- [x] T005 Create index landing page content (file: apps/docs/content/index.md) (depends on T002)
+- [x] T006 Create Getting Started guide content (file: apps/docs/content/1.getting-started/1.introduction.md) (depends on T002)
+- [x] T007 Add Turborepo build config for docs package (file: apps/docs/turbo.json) (depends on T002)
+- [x] T008 Verify build output and dev server work (depends on T001, T002, T003, T004, T005, T006, T007)
 
 ## Key Files
 
