@@ -1,0 +1,29 @@
+.please/docs/tracks/active/docs-site-20260325/spec.md
+  8a9570e249d4ed03 1-54
+.please/docs/tracks/index.md
+  8a9570e249d4ed03 10
+.please/docs/tracks/active/docs-site-20260325/plan.md
+  8a9570e249d4ed03 1-101
+.please/docs/tracks/active/docs-site-20260325/metadata.json
+  8a9570e249d4ed03 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "3191e8a0ae393cd7eac613ab01fee1af9057109d",
+  "prompts": {
+    "8a9570e249d4ed03": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8e84f916-e17e-45ed-99c3-d6dd85f259c0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 104,
+      "total_deletions": 2,
+      "accepted_lines": 165,
+      "overriden_lines": 0
+    }
+  }
+}
