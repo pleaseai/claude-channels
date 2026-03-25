@@ -457,8 +457,8 @@ async function downloadFile(file: SlackFile): Promise<string> {
   const rawExt = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : 'bin'
   const ext = rawExt.replace(RE_EXT_SANITIZE, '') || 'bin'
   const path = join(INBOX_DIR, `${Date.now()}-${file.id}.${ext}`)
-  mkdirSync(INBOX_DIR, { recursive: true })
-  writeFileSync(path, buf)
+  mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
+  writeFileSync(path, buf, { mode: 0o600 })
   return path
 }
 
@@ -656,7 +656,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       case 'fetch_messages': {
         const channelId = args.channel as string
         await assertAllowedChannel(channelId)
-        const msgLimit = Math.min((args.limit as number) ?? 20, 100)
+        const msgLimit = Math.max(1, Math.min((args.limit as number) ?? 20, 100))
 
         const result = await web.conversations.history({
           channel: channelId,
@@ -706,14 +706,32 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const chatId = args.chat_id as string
         await assertAllowedChannel(chatId)
 
-        // Fetch the specific message to get its files
+        // Fetch the specific message to get its files.
+        // Try conversations.history first (top-level), fall back to
+        // conversations.replies for threaded messages.
+        const messageTs = args.message_id as string
         const result = await web.conversations.history({
           channel: chatId,
-          latest: args.message_id as string,
+          oldest: messageTs,
+          latest: messageTs,
           inclusive: true,
           limit: 1,
         })
-        const msg = result.messages?.[0]
+        let msg = result.messages?.[0]
+        if (!msg?.files?.length) {
+          // May be a threaded reply — try conversations.replies
+          try {
+            const threadResult = await web.conversations.replies({
+              channel: chatId,
+              ts: messageTs,
+              latest: messageTs,
+              inclusive: true,
+              limit: 1,
+            })
+            msg = threadResult.messages?.[0]
+          }
+          catch { /* thread lookup failed — use original result */ }
+        }
         if (!msg?.files?.length) {
           return { content: [{ type: 'text' as const, text: 'message has no attachments' }] }
         }
@@ -754,10 +772,34 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 })
 
 /* ------------------------------------------------------------------ */
+/*  Inbound deduplication                                              */
+/* ------------------------------------------------------------------ */
+
+// Slack delivers both `message` and `app_mention` events for the same
+// @-mention in a channel. Track recent ts values to avoid double delivery.
+const recentInboundTs = new Set<string>()
+const RECENT_INBOUND_CAP = 200
+
+function dedup(ts: string): boolean {
+  if (recentInboundTs.has(ts))
+    return false
+  recentInboundTs.add(ts)
+  if (recentInboundTs.size > RECENT_INBOUND_CAP) {
+    const first = recentInboundTs.values().next().value
+    if (first)
+      recentInboundTs.delete(first)
+  }
+  return true
+}
+
+/* ------------------------------------------------------------------ */
 /*  Inbound message handling                                           */
 /* ------------------------------------------------------------------ */
 
 async function handleInbound(msg: SlackMessage): Promise<void> {
+  if (!dedup(msg.ts))
+    return
+
   const result = gate(msg)
 
   if (result.action === 'drop')
