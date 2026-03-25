@@ -34,27 +34,27 @@ The single-file constraint keeps all concerns (MCP server, Slack client, access 
 
 ### Phase 1: Project Scaffold
 
-- [ ] T001 Create Slack plugin package with workspace config (file: plugins/slack/package.json)
-- [ ] T002 Create plugin manifest and MCP server config (file: plugins/slack/.claude-plugin/plugin.json)
+- [x] T001 Create Slack plugin package with workspace config (file: plugins/slack/package.json)
+- [x] T002 Create plugin manifest and MCP server config (file: plugins/slack/.claude-plugin/plugin.json)
 
 ### Phase 2: Core Server
 
-- [ ] T003 Implement MCP server with Socket Mode connection and inbound messaging (file: plugins/slack/server.ts) (depends on T001)
-- [ ] T004 Implement access control with sender gating, pairing flow, and approval polling (file: plugins/slack/server.ts) (depends on T003)
-- [ ] T005 Implement outbound reply tool with chunking and file attachments (file: plugins/slack/server.ts) (depends on T003)
+- [x] T003 Implement MCP server with Socket Mode connection and inbound messaging (file: plugins/slack/server.ts) (depends on T001)
+- [x] T004 Implement access control with sender gating, pairing flow, and approval polling (file: plugins/slack/server.ts) (depends on T003)
+- [x] T005 Implement outbound reply tool with chunking and file attachments (file: plugins/slack/server.ts) (depends on T003)
 
 ### Phase 3: Extended Tools
 
-- [ ] T006 [P] Implement react tool (file: plugins/slack/server.ts) (depends on T005)
-- [ ] T007 [P] Implement edit_message tool (file: plugins/slack/server.ts) (depends on T005)
-- [ ] T008 [P] Implement fetch_messages tool (file: plugins/slack/server.ts) (depends on T005)
-- [ ] T009 [P] Implement download_attachment tool (file: plugins/slack/server.ts) (depends on T005)
+- [x] T006 [P] Implement react tool (file: plugins/slack/server.ts) (depends on T005)
+- [x] T007 [P] Implement edit_message tool (file: plugins/slack/server.ts) (depends on T005)
+- [x] T008 [P] Implement fetch_messages tool (file: plugins/slack/server.ts) (depends on T005)
+- [x] T009 [P] Implement download_attachment tool (file: plugins/slack/server.ts) (depends on T005)
 
 ### Phase 4: Skills & Polish
 
-- [ ] T010 Create access management skill (file: plugins/slack/skills/access/SKILL.md) (depends on T004)
-- [ ] T011 Create configure skill for token setup (file: plugins/slack/skills/configure/SKILL.md) (depends on T003)
-- [ ] T012 Add typing indicator and ack reaction support (file: plugins/slack/server.ts) (depends on T005)
+- [x] T010 Create access management skill (file: plugins/slack/skills/access/SKILL.md) (depends on T004)
+- [x] T011 Create configure skill for token setup (file: plugins/slack/skills/configure/SKILL.md) (depends on T003)
+- [x] T012 Add typing indicator and ack reaction support (file: plugins/slack/server.ts) (depends on T005)
 
 ## Key Files
 
@@ -108,18 +108,18 @@ The single-file constraint keeps all concerns (MCP server, Slack client, access 
 
 ## Progress
 
-- [ ] T001 Create Slack plugin package with workspace config
-- [ ] T002 Create plugin manifest and MCP server config
-- [ ] T003 Implement MCP server with Socket Mode connection and inbound messaging
-- [ ] T004 Implement access control with sender gating, pairing flow, and approval polling
-- [ ] T005 Implement outbound reply tool with chunking and file attachments
-- [ ] T006 Implement react tool
-- [ ] T007 Implement edit_message tool
-- [ ] T008 Implement fetch_messages tool
-- [ ] T009 Implement download_attachment tool
-- [ ] T010 Create access management skill
-- [ ] T011 Create configure skill for token setup
-- [ ] T012 Add typing indicator and ack reaction support
+- [x] (2026-03-25 12:20 KST) T001 Create Slack plugin package with workspace config
+- [x] (2026-03-25 12:20 KST) T002 Create plugin manifest and MCP server config
+- [x] (2026-03-25 12:35 KST) T003 Implement MCP server with Socket Mode connection and inbound messaging
+- [x] (2026-03-25 12:35 KST) T004 Implement access control with sender gating, pairing flow, and approval polling
+- [x] (2026-03-25 12:35 KST) T005 Implement outbound reply tool with chunking and file attachments
+- [x] (2026-03-25 12:35 KST) T006 Implement react tool
+- [x] (2026-03-25 12:35 KST) T007 Implement edit_message tool
+- [x] (2026-03-25 12:35 KST) T008 Implement fetch_messages tool
+- [x] (2026-03-25 12:35 KST) T009 Implement download_attachment tool
+- [x] (2026-03-25 12:40 KST) T010 Create access management skill
+- [x] (2026-03-25 12:40 KST) T011 Create configure skill for token setup
+- [x] (2026-03-25 12:35 KST) T012 Add typing indicator and ack reaction support
 
 ## Decision Log
 
@@ -129,4 +129,7 @@ The single-file constraint keeps all concerns (MCP server, Slack client, access 
 
 ## Surprises & Discoveries
 
-(None yet)
+- Observation: Slack Web API types are loosely typed — conversations.info returns `Channel` without `user` property for DMs
+  Evidence: Required `as Record<string, unknown>` cast in assertAllowedChannel
+- Observation: ESLint antfu config enforces node: protocol imports, module-scope regex, no top-level await
+  Evidence: Multiple lint fixes needed to match project style conventions
