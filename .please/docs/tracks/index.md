@@ -4,9 +4,10 @@
 
 ## Active
 
-| Track                                                                  | Feature              | Type    | Issue | Started    | Status |
-| ---------------------------------------------------------------------- | -------------------- | ------- | ----- | ---------- | ------ |
-| [slack-channel-plugin-20260325](active/slack-channel-plugin-20260325/) | Slack Channel Plugin | feature |       | 2026-03-25 | draft  |
+| Track                                                                  | Feature              | Type    | Issue | Started    | Status      |
+| ---------------------------------------------------------------------- | -------------------- | ------- | ----- | ---------- | ----------- |
+| [slack-channel-plugin-20260325](active/slack-channel-plugin-20260325/) | Slack Channel Plugin | feature |       | 2026-03-25 | in_progress |
+| [docs-site-20260325](active/docs-site-20260325/)                       | Documentation Site   | feature |       | 2026-03-25 | planned     |
 
 ## Recently Completed
 
