@@ -12,6 +12,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -215,8 +216,10 @@ async function downloadFile(file: SlackFile): Promise<string> {
   const rawExt = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : 'bin'
   const ext = rawExt.replace(RE_EXT_SANITIZE, '') || 'bin'
   const path = join(INBOX_DIR, `${Date.now()}-${file.id}.${ext}`)
+  const tmp = `${path}.tmp`
   mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
-  writeFileSync(path, buf, { mode: 0o600 })
+  writeFileSync(tmp, buf, { mode: 0o600 })
+  renameSync(tmp, path)
   return path
 }
 
@@ -233,6 +236,16 @@ function isInBoundThread(msg: SlackMessage): boolean {
     return false
   // Accept messages that are replies in the bound thread
   return msg.thread_ts === boundThreadTs
+}
+
+async function assertInBoundThread(messageTs: string): Promise<void> {
+  const result = await web.conversations.replies({
+    channel: BOUND_CHANNEL,
+    ts: boundThreadTs,
+  })
+  const found = result.messages?.some(m => m.ts === messageTs)
+  if (!found)
+    throw new Error(`message ${messageTs} is not in the bound thread`)
 }
 
 /* ------------------------------------------------------------------ */
@@ -423,18 +436,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case 'react': {
+        const messageId = args.message_id as string
+        await assertInBoundThread(messageId)
         await web.reactions.add({
           channel: BOUND_CHANNEL,
-          timestamp: args.message_id as string,
+          timestamp: messageId,
           name: args.emoji as string,
         })
         return { content: [{ type: 'text' as const, text: 'reacted' }] }
       }
 
       case 'edit_message': {
+        const messageId = args.message_id as string
+        await assertInBoundThread(messageId)
         const edited = await web.chat.update({
           channel: BOUND_CHANNEL,
-          ts: args.message_id as string,
+          ts: messageId,
           text: args.text as string,
         })
         return { content: [{ type: 'text' as const, text: `edited (ts: ${edited.ts})` }] }

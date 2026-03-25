@@ -228,4 +228,14 @@ describe('thread binding in source', () => {
     // Should fetch thread replies, not channel history
     expect(source).toContain('web.conversations.replies')
   })
+
+  test('react and edit validate message is in bound thread', () => {
+    // Both tools should call assertInBoundThread before operating
+    expect(source).toContain('assertInBoundThread(messageId)')
+  })
+
+  test('file download uses atomic write', () => {
+    // Download should write to tmp then rename
+    expect(source).toContain('renameSync(tmp, path)')
+  })
 })
