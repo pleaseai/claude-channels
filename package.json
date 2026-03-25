@@ -3,6 +3,9 @@
   "type": "module",
   "version": "0.0.0",
   "private": true,
+  "author": "Minsu Lee (https://github.com/amondnet)",
+  "license": "MIT",
+  "repository": "pleaseai/claude-channels",
   "workspaces": [
     "plugins/*"
   ],

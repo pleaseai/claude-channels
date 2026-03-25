@@ -261,4 +261,6 @@ MIT
 
 ## Author
 
+[Passion Factory, Inc](https://passionfactory.ai) · [please AI](https://pleaseai.dev)
+
 Minsu Lee ([@amondnet](https://github.com/amondnet))
