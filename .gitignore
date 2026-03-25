@@ -1,6 +1,7 @@
 # IDE
 .idea/
 *.iml
+.vscode/
 
 # Dependencies
 node_modules/
@@ -8,6 +9,25 @@ node_modules/
 # Environment
 .env
 .env.local
+.env.secrets
 
 # OS
 .DS_Store
+
+# Turbo
+.turbo/
+
+# ESLint
+.eslintcache
+
+# Build
+dist/
+
+# Bun
+*.bun
+
+# Claude Code
+.claude/settings.local.json
+
+# Please
+.please/state/

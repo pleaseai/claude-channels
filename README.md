@@ -4,18 +4,17 @@ Channel plugins for [Claude Code](https://code.claude.com). Push messages from c
 
 ## Supported Channels
 
-| Channel | Status | Protocol | Description |
-| ------- | ------ | -------- | ----------- |
+| Channel         | Status      | Protocol    | Description                             |
+| --------------- | ----------- | ----------- | --------------------------------------- |
 | [Slack](#slack) | In Progress | Socket Mode | Two-way channel via Slack DM & mentions |
-| Kakao Talk | Planned | - | Kakao Talk messenger channel |
-| Line | Planned | - | Line messenger channel |
+| Line            | Planned     | -           | Line messenger channel                  |
 
 ## Overview
 
 Each channel plugin is an MCP server implementing the [Channels](https://code.claude.com/docs/en/channels) protocol. Claude Code spawns it as a subprocess and bridges the external chat platform with the Claude Code session bidirectionally.
 
 ```
-Chat Platform (Slack, Kakao, Line, ...)
+Chat Platform (Slack, Line, ...)
     ↕ platform API
 Channel Plugin (MCP server, local subprocess)
     ↕ stdio
@@ -51,30 +50,60 @@ All official channel plugins share these patterns:
 ## Requirements
 
 - [Claude Code](https://code.claude.com) v2.1.80 or later (claude.ai login required)
-- [Bun](https://bun.sh) runtime
+- [Bun](https://bun.sh) 1.3.10+
+- [Node.js](https://nodejs.org) 24+ (for tooling)
+- [mise](https://mise.jdx.dev) (recommended, manages Bun/Node versions)
+
+## Getting Started
+
+```bash
+# Install tool versions (Bun, Node)
+mise install
+
+# Install dependencies
+bun install
+
+# Install git hooks (pre-commit, commit-msg)
+mise run setup
+```
 
 ## Project Structure
 
+This is a Bun workspace monorepo managed with [Turborepo](https://turbo.build).
+
 ```
-├── channels/
+├── plugins/
 │   ├── slack/                 # Slack channel plugin
 │   │   ├── server.ts          # MCP server, Slack client, access control, tools
 │   │   ├── skills/            # Access management slash commands
 │   │   ├── .claude-plugin     # Plugin manifest
 │   │   ├── .mcp.json          # MCP server config
 │   │   └── package.json
-│   ├── kakaotalk/             # (planned)
 │   └── line/                  # (planned)
-├── vendor/                    # Reference implementations
+├── vendor/                    # Reference implementations (git submodule)
 │   └── claude-plugins-official/
 │       └── external_plugins/
 │           ├── fakechat/      # Localhost demo channel
 │           ├── discord/       # Discord channel
 │           └── telegram/      # Telegram channel
-├── package.json
+├── .mise.toml                 # Tool versions & git hook tasks
+├── turbo.json                 # Turborepo pipeline config
+├── eslint.config.ts           # ESLint (antfu config)
+├── commitlint.config.ts       # Conventional commit validation
 ├── tsconfig.json
+├── package.json
 └── README.md
 ```
+
+### Tooling
+
+| Tool                                    | Purpose                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| [Bun](https://bun.sh)                   | Runtime, package manager, workspace                                      |
+| [Turborepo](https://turbo.build)        | Task orchestration & caching                                             |
+| [ESLint](https://eslint.org)            | Linting ([@antfu/eslint-config](https://github.com/antfu/eslint-config)) |
+| [commitlint](https://commitlint.js.org) | Conventional commit enforcement                                          |
+| [mise](https://mise.jdx.dev)            | Tool version management & git hooks                                      |
 
 ---
 
@@ -166,13 +195,13 @@ Hello Claude!
 
 ### Tools
 
-| Tool | Description |
-| ---- | ----------- |
-| `reply` | Send a message back to Slack. Supports `reply_to` for threading and `files` for attachments. |
-| `react` | Add an emoji reaction to a Slack message. |
-| `edit_message` | Edit a previously sent message. |
-| `fetch_messages` | Fetch recent messages from a Slack channel. |
-| `download_attachment` | Download file attachments from a message to local inbox. |
+| Tool                  | Description                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `reply`               | Send a message back to Slack. Supports `reply_to` for threading and `files` for attachments. |
+| `react`               | Add an emoji reaction to a Slack message.                                                    |
+| `edit_message`        | Edit a previously sent message.                                                              |
+| `fetch_messages`      | Fetch recent messages from a Slack channel.                                                  |
+| `download_attachment` | Download file attachments from a message to local inbox.                                     |
 
 ### Local Development
 
@@ -181,7 +210,7 @@ Register the server in `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "slack": { "command": "bun", "args": ["./channels/slack/server.ts"] }
+    "slack": { "command": "bun", "args": ["./plugins/slack/server.ts"] }
   }
 }
 ```
@@ -196,7 +225,7 @@ claude --dangerously-load-development-channels server:slack
 
 ## Adding a New Channel
 
-To add a new channel, create a `channels/<platform>/` directory following the reference implementation patterns:
+To add a new channel, create a `plugins/<platform>/` directory following the reference implementation patterns:
 
 1. **`server.ts`** — Single-file MCP server:
    - Declare `claude/channel` capability and `tools` capability

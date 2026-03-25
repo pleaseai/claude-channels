@@ -1,0 +1,18 @@
+[tools]
+bun = "1.3.10"
+node = "24"
+
+[tasks.pre-commit]
+description = "Lint staged files"
+run = "bun run lint"
+
+[tasks.commit-msg]
+description = "Validate commit message"
+run = "bunx commitlint --edit"
+
+[tasks.setup]
+description = "Install git hooks"
+run = [
+  "mise generate git-pre-commit --write",
+  "mise generate git-pre-commit --write --hook=commit-msg --task=commit-msg",
+]
