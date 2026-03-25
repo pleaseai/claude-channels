@@ -1,0 +1,25 @@
+plugins/slack/server.ts
+  57e50ae5e4c126bf 245-248
+.please/docs/tracks/active/thread-bound-session-20260325/spec.md
+  57e50ae5e4c126bf 16,18-19,25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "0a3e3ca459b429f17b1f995da7f4b0bba9f01ce3",
+  "prompts": {
+    "57e50ae5e4c126bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "248400e3-65f6-490c-b28d-028c173547d0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 4,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
