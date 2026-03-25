@@ -1,0 +1,23 @@
+plugins/slack/server.ts
+  741ed8c9dc50e806 460-461,659,709-712,715-716,720-734,775-794,800-802
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "5b9ea9d05b0cc90e8d1910a662ed09cdfb7fba08",
+  "prompts": {
+    "741ed8c9dc50e806": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b919e8d8-6da4-4549-a67c-5ecd3ef33595",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 86,
+      "total_deletions": 8,
+      "accepted_lines": 85,
+      "overriden_lines": 0
+    }
+  }
+}
