@@ -242,6 +242,10 @@ async function assertInBoundThread(messageTs: string): Promise<void> {
   const result = await web.conversations.replies({
     channel: BOUND_CHANNEL,
     ts: boundThreadTs,
+    oldest: messageTs,
+    latest: messageTs,
+    inclusive: true,
+    limit: 1,
   })
   const found = result.messages?.some(m => m.ts === messageTs)
   if (!found)
