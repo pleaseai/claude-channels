@@ -1,0 +1,27 @@
+README.md
+  741ed8c9dc50e806 264-265
+package.json
+  741ed8c9dc50e806 6,8
+LICENSE
+  741ed8c9dc50e806 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "934cbd8f37b82b55f54374a9f3c992843e42eedf",
+  "prompts": {
+    "741ed8c9dc50e806": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b919e8d8-6da4-4549-a67c-5ecd3ef33595",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 2,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    }
+  }
+}
