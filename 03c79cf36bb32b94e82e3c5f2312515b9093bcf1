@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "03c79cf36bb32b94e82e3c5f2312515b9093bcf1",
+  "prompts": {
+    "cea7fa5adffbc5d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2991c633-a1ec-417a-b3cd-93ddf3a626dc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 907,
+      "overriden_lines": 0
+    }
+  }
+}
