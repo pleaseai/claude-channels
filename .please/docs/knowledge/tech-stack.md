@@ -26,6 +26,13 @@
 - **Bun workspaces** — Package management and dependency hoisting
 - **Turborepo** — Task orchestration, caching, and pipeline management
 
+## Documentation
+
+- **Docus** (latest) — Nuxt 4 + Nuxt UI + Nuxt Content documentation theme
+- **Nuxt 4** — Framework for the documentation site
+- **Cloudflare Pages** — Static hosting with Git integration
+- **npm** — Package manager for `apps/docs` (Bun workspace incompatible with Docus build)
+
 ## Development Tools
 
 | Tool       | Purpose                                                |

@@ -6,5 +6,7 @@ export default antfu({
   formatters: true,
   ignores: [
     'vendor/**',
+    'apps/docs/.output/**',
+    'apps/docs/content/**',
   ],
 })
