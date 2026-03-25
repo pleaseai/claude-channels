@@ -1,0 +1,25 @@
+.please/docs/knowledge/product.md
+  e30a9fd4531f9002 15
+.please/docs/tracks/active/thread-bound-session-20260325/plan.md
+  e30a9fd4531f9002 51-56,100-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "626ee7ce47faeebcc067fdb4198c280e8f3640c2",
+  "prompts": {
+    "e30a9fd4531f9002": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "026b97bc-92f4-4787-a667-f7a500a03798",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 17,
+      "total_deletions": 7,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
