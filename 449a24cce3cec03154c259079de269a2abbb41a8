@@ -1,0 +1,31 @@
+plugins/slack/skills/configure/SKILL.md
+  741ed8c9dc50e806 15-16
+.mise.toml
+  741ed8c9dc50e806 8
+.please/docs/tracks/active/docs-site-20260325/spec.md
+  741ed8c9dc50e806 54
+plugins/slack/package.json
+  741ed8c9dc50e806 8
+plugins/slack/.mcp.json
+  741ed8c9dc50e806 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "449a24cce3cec03154c259079de269a2abbb41a8",
+  "prompts": {
+    "741ed8c9dc50e806": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b919e8d8-6da4-4549-a67c-5ecd3ef33595",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 11,
+      "accepted_lines": 42,
+      "overriden_lines": 1
+    }
+  }
+}
