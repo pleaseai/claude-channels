@@ -1,0 +1,79 @@
+README.md
+  ab17ec8908b37dbb 53-55,57-68,72-73,75,83,89-92,94,98-100,102-106,213,228
+.please/INDEX.md
+  ab17ec8908b37dbb 1-7,9-14,16-35
+.please/docs/tracks/index.md
+  ab17ec8908b37dbb 1-7,9-13,15-18
+.please/docs/decisions/index.md
+  ab17ec8908b37dbb 1-5
+package.json
+  ab17ec8908b37dbb 1-2,4-13,24-25
+.please/docs/tracks/active/slack-channel-plugin-20260325/plan.md
+  ab17ec8908b37dbb 1-7
+turbo.json
+  ab17ec8908b37dbb 1-16
+.nvmrc
+  ab17ec8908b37dbb 1
+.please/docs/knowledge/product.md
+  ab17ec8908b37dbb 1-29
+eslint.config.ts
+  ab17ec8908b37dbb 1-5,7-10
+  741ed8c9dc50e806 6
+commitlint.config.ts
+  ab17ec8908b37dbb 1-6
+.mise.toml
+  ab17ec8908b37dbb 1-18
+.please/docs/tracks/active/slack-channel-plugin-20260325/spec.md
+  ab17ec8908b37dbb 1-9,11-14,16-19,21-26,28-33,35-40,42-45,47-53,55-72
+.gitignore
+  ab17ec8908b37dbb 4,12,15-33
+.please/docs/tracks/tech-debt-tracker.md
+  ab17ec8908b37dbb 1-7,9-12
+.please/docs/knowledge/product-guidelines.md
+  ab17ec8908b37dbb 1-29
+.please/config.yml
+  ab17ec8908b37dbb 1-11
+.please/docs/knowledge/workflow.md
+  ab17ec8908b37dbb 1-128
+.please/docs/product-specs/index.md
+  ab17ec8908b37dbb 1-5
+tsconfig.json
+  ab17ec8908b37dbb 1-5,8-9,11,13-15
+.please/docs/knowledge/tech-stack.md
+  ab17ec8908b37dbb 1-19,21-31,33-46
+.please/docs/tracks/active/slack-channel-plugin-20260325/metadata.json
+  ab17ec8908b37dbb 1-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "c80c6b37754b61af2a2b2739931455fb970bcfe5",
+  "prompts": {
+    "741ed8c9dc50e806": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b919e8d8-6da4-4549-a67c-5ecd3ef33595",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "ab17ec8908b37dbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b61d4553-f689-4057-bb00-99b4a78ede0f",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 550,
+      "total_deletions": 18,
+      "accepted_lines": 523,
+      "overriden_lines": 13
+    }
+  }
+}
