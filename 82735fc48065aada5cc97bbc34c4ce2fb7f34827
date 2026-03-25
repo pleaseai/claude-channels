@@ -1,0 +1,23 @@
+.please/docs/knowledge/tech-stack.md
+  cea7fa5adffbc5d0 29-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "82735fc48065aada5cc97bbc34c4ce2fb7f34827",
+  "prompts": {
+    "cea7fa5adffbc5d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2991c633-a1ec-417a-b3cd-93ddf3a626dc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 0,
+      "accepted_lines": 897,
+      "overriden_lines": 0
+    }
+  }
+}
