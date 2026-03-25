@@ -1,0 +1,29 @@
+apps/docs/app.config.ts
+  cea7fa5adffbc5d0 1-2,12,15
+apps/docs/content/1.getting-started/1.introduction.md
+  cea7fa5adffbc5d0 72,79
+apps/docs/CLAUDE.md
+  cea7fa5adffbc5d0 31
+eslint.config.ts
+  cea7fa5adffbc5d0 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "bf6786e60857fad45b5155a7973b9c8cd3abaf90",
+  "prompts": {
+    "cea7fa5adffbc5d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2991c633-a1ec-417a-b3cd-93ddf3a626dc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 6,
+      "accepted_lines": 916,
+      "overriden_lines": 0
+    }
+  }
+}
