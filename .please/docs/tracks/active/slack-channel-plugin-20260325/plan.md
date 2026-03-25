@@ -133,3 +133,28 @@ The single-file constraint keeps all concerns (MCP server, Slack client, access 
   Evidence: Required `as Record<string, unknown>` cast in assertAllowedChannel
 - Observation: ESLint antfu config enforces node: protocol imports, module-scope regex, no top-level await
   Evidence: Multiple lint fixes needed to match project style conventions
+
+## Outcomes & Retrospective
+
+### What Was Shipped
+
+- Complete Slack channel plugin (930 LOC) with Socket Mode connection, sender access control (pairing + allowlist), and five tools (reply, react, edit_message, fetch_messages, download_attachment)
+- Access management skill (`/slack:access`) and token configuration skill (`/slack:configure`)
+- Plugin manifest, MCP config, and workspace integration
+
+### What Went Well
+
+- Reference-aligned approach (Discord pattern) significantly accelerated development — most patterns translated directly
+- Code review caught duplicate message delivery bug (message + app_mention) before manual testing
+- Thread-aware download_attachment fix improved robustness
+
+### What Could Improve
+
+- Slack Web API TypeScript types are loosely typed — required unsafe casts in several places
+- No automated tests yet — all verification is manual
+- Could benefit from a shared test harness for mocking Slack SDK responses
+
+### Tech Debt Created
+
+- No automated test coverage (tracked in verification checklist)
+- `assertSendable` silently passes on realpathSync failure (matches reference pattern, documented trade-off)
