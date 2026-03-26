@@ -1,0 +1,46 @@
+apps/docs/content/1.getting-started/1.introduction.md
+  e4cc085f7eceab1a 26,28,31-37,40,42,45-46,50-54,56,58,64,66,69-71,74,76-79,82,84,86
+plugins/slack/skills/configure/SKILL.md
+  e4cc085f7eceab1a 32-38,45,48-50,83-103
+README.md
+  e4cc085f7eceab1a 11,114,116,118,120,123,126,129-131,134,137,140,142-148
+apps/docs/content/1.getting-started/3.usage.md
+  e4cc085f7eceab1a 8,106-107,113
+plugins/slack/README.ko.md
+  e4cc085f7eceab1a 1-106
+apps/docs/content/1.getting-started/2.slack-setup.md
+  e4cc085f7eceab1a 8,26,30,32,37-39,42-50,52-58,67-68,71-73,75-78,83,85-87,89,91,94,97,99-103,106,108,110-111,114,116,118-121,124,126-129,132-134,136,138-140,142,144,146-148,150,152,154,161-165,169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "3e834eb398462f33f5c17b7b45c61fe09a812a26",
+  "prompts": {
+    "5f2e0079f6d91fce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3552b18d-28e4-496a-a547-3cdb0034f2ed",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    },
+    "e4cc085f7eceab1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eed76eeb-a825-44a4-b1db-4638ec8aa6e4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 291,
+      "total_deletions": 202,
+      "accepted_lines": 290,
+      "overriden_lines": 0
+    }
+  }
+}
