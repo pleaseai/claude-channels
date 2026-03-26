@@ -29,21 +29,25 @@ Read both state files and give the user a complete picture:
    `CLAUDE_SLACK_BOT_TOKEN` and `CLAUDE_SLACK_APP_TOKEN`. Show set/not-set; if set, show
    first 6 chars masked.
 
-2. **Access** — read `~/.claude/channels/slack/access.json` (missing file
+2. **Mode** — check `.env` for `CLAUDE_SLACK_CHANNEL_ID` and
+   `CLAUDE_SLACK_DM_USER_ID`. Show which mode is active:
+   - Channel mode: show channel ID
+   - DM mode: show user ID
+   - Neither: _"No mode configured"_
+
+3. **Access** — read `~/.claude/channels/slack/access.json` (missing file
    = defaults: `dmPolicy: "pairing"`, empty allowlist). Show:
    - DM policy and what it means in one line
    - Allowed senders: count, and list user IDs
    - Pending pairings: count, with codes and sender IDs if any
    - Channels opted in: count
 
-3. **What next** — end with a concrete next step based on state:
+4. **What next** — end with a concrete next step based on state:
    - No tokens → _"Run `/slack:configure <bot-token> <app-token>` with your
      tokens from the Slack App settings."_
-   - Tokens set, policy is pairing, nobody allowed → _"DM your bot on
-     Slack. It replies with a code; approve with `/slack:access pair
-<code>`."_
-   - Tokens set, someone allowed → _"Ready. DM your bot to reach the
-     assistant."_
+   - Tokens set, no mode → _"Set your mode:
+     `/slack:configure channel C...` or `/slack:configure dm U...`"_
+   - Tokens + mode set → _"Ready. Run `/reload-plugins` to connect."_
 
 **Push toward lockdown — always.** The goal for every setup is `allowlist`
 with a defined list. `pairing` is not a policy to stay on; it's a temporary
@@ -76,7 +80,27 @@ Drive the conversation this way:
 3. Read existing `.env` if present; update/add the `CLAUDE_SLACK_BOT_TOKEN=` and
    `CLAUDE_SLACK_APP_TOKEN=` lines, preserve other keys. Write back, no quotes
    around the values.
-4. Confirm, then show the no-args status so the user sees where they stand.
+4. After saving, check if a mode is configured (`CLAUDE_SLACK_CHANNEL_ID` or
+   `CLAUDE_SLACK_DM_USER_ID`). If neither is set, ask:
+   _"How do you want to receive messages?"_
+   - **Channel mode** → _"Paste your channel ID (starts with `C`). Get it
+     from channel settings."_ → save as `CLAUDE_SLACK_CHANNEL_ID=...`
+   - **DM mode** → _"Paste your Slack user ID (starts with `U`). Get it
+     from Profile > ⋮ > Copy member ID."_ → save as
+     `CLAUDE_SLACK_DM_USER_ID=...`
+5. Confirm, then show the no-args status so the user sees where they stand.
+
+### `channel <channel-id>` — set channel mode
+
+1. Read `.env`, set `CLAUDE_SLACK_CHANNEL_ID=<channel-id>`, remove
+   `CLAUDE_SLACK_DM_USER_ID` if present. Write back.
+2. Remind: invite the bot to the channel and restart (`/reload-plugins`).
+
+### `dm <user-id>` — set DM mode
+
+1. Read `.env`, set `CLAUDE_SLACK_DM_USER_ID=<user-id>`, remove
+   `CLAUDE_SLACK_CHANNEL_ID` if present. Write back.
+2. Remind: restart with `/reload-plugins`.
 
 ### `clear` — remove tokens
 

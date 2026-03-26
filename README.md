@@ -8,7 +8,7 @@ Channel plugins for [Claude Code](https://code.claude.com). Push messages from c
 
 | Channel         | Status      | Protocol    | Description                             |
 | --------------- | ----------- | ----------- | --------------------------------------- |
-| [Slack](#slack) | In Progress | Socket Mode | Two-way channel via Slack DM & mentions |
+| [Slack](#slack) | In Progress | Socket Mode | Two-way channel via Slack threads (channel or DM) |
 | Line            | Planned     | -           | Line messenger channel                  |
 
 ## Overview
@@ -111,117 +111,41 @@ This is a Bun workspace monorepo managed with [Turborepo](https://turbo.build).
 
 ## Slack
 
-Two-way channel plugin connecting a Slack workspace to Claude Code via [Socket Mode](https://api.slack.com/apis/socket-mode). Runs locally with no public URL required.
+Two-way channel plugin connecting a Slack workspace to Claude Code via [Socket Mode](https://api.slack.com/apis/socket-mode). Each session gets a dedicated thread — in a channel or DM. Runs locally with no public URL required.
+
+See [plugins/slack/README.md](plugins/slack/README.md) for full setup and usage details.
+
+### Quick Start
+
+**Install from marketplace:**
+
+```bash
+claude plugin add claude-channels/slack
+```
+
+**Configure:**
+
+```
+/slack:configure <xoxb-bot-token> <xapp-app-token>
+/slack:configure channel C0123456789   # channel thread mode
+/slack:configure dm UYourUserID        # or DM thread mode
+```
+
+**Development mode:**
+
+```bash
+claude --dangerously-load-development-channels plugin:slack@claude-channels
+```
 
 ### Features
 
-- **Two-way messaging** — Receive DMs and mentions, reply back through Slack
-- **Sender allowlist with pairing** — Only approved users can push messages into the session
+- **Two-way messaging** — Channel threads or DM threads, reply back through Slack
+- **Dual mode** — Channel thread mode (`CLAUDE_SLACK_CHANNEL_ID`) or DM thread mode (`CLAUDE_SLACK_DM_USER_ID`)
 - **Socket Mode** — No public URL or webhook endpoint needed
 - **Message chunking** — Long replies split at Slack's 4000-char limit
-- **File attachments** — Send and receive files
+- **File attachments** — Send and receive files (up to 25 MB)
 - **Reactions & message editing** — React to messages, edit previously sent messages
-- **Group/channel support** — Opt in specific channels with mention-triggering
 - **Typing indicator** — Show processing state in Slack
-
-### Slack App Setup
-
-1. Go to [Slack API Apps](https://api.slack.com/apps) and click **Create New App** > **From scratch**
-2. Name your app (e.g., `Claude Code Bot`) and select your workspace
-3. Enable **Socket Mode** under **Settings > Socket Mode** and generate an **App-Level Token** with `connections:write` scope (starts with `xapp-`)
-4. Under **Features > Event Subscriptions**, enable events and subscribe to:
-   - `message.im` (Direct messages)
-   - `app_mention` (Mentions in channels)
-5. Under **Features > OAuth & Permissions**, add these Bot Token Scopes:
-   - `chat:write` — Send messages
-   - `im:history` — Read DM history
-   - `im:read` — View DMs
-   - `app_mentions:read` — Read mentions
-   - `users:read` — Read user info
-   - `reactions:write` — Add reactions
-   - `files:read` — Access shared files
-   - `files:write` — Upload files
-6. Install the app to your workspace and copy the **Bot User OAuth Token** (starts with `xoxb-`)
-
-### Installation
-
-Install the plugin:
-
-```
-/plugin install slack@claude-plugins-official
-```
-
-Configure tokens:
-
-```
-/slack:configure <bot-token> <app-token>
-```
-
-Tokens are saved to `~/.claude/channels/slack/.env`. You can also set environment variables before launching Claude Code:
-
-```bash
-export SLACK_BOT_TOKEN=xoxb-...
-export SLACK_APP_TOKEN=xapp-...
-```
-
-Start with the channel enabled:
-
-```bash
-claude --channels plugin:slack@claude-plugins-official
-```
-
-### Pairing
-
-1. Send a DM to your bot in Slack
-2. The bot replies with a pairing code
-3. In Claude Code, run:
-   ```
-   /slack:access pair <code>
-   ```
-4. Lock down access:
-   ```
-   /slack:access policy allowlist
-   ```
-
-Messages from senders not on the allowlist are silently dropped.
-
-### Message Format
-
-Messages from Slack arrive in Claude Code as:
-
-```xml
-<channel source="slack" chat_id="D67890" message_id="1234567890.123456" user="minsu" user_id="U12345" ts="2026-03-20T10:00:00.000Z">
-Hello Claude!
-</channel>
-```
-
-### Tools
-
-| Tool                  | Description                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------- |
-| `reply`               | Send a message back to Slack. Supports `reply_to` for threading and `files` for attachments. |
-| `react`               | Add an emoji reaction to a Slack message.                                                    |
-| `edit_message`        | Edit a previously sent message.                                                              |
-| `fetch_messages`      | Fetch recent messages from a Slack channel.                                                  |
-| `download_attachment` | Download file attachments from a message to local inbox.                                     |
-
-### Local Development
-
-Register the server in `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "slack": { "command": "bun", "args": ["./plugins/slack/server.ts"] }
-  }
-}
-```
-
-Start Claude Code with the development flag:
-
-```bash
-claude --dangerously-load-development-channels server:slack
-```
 
 ---
 
