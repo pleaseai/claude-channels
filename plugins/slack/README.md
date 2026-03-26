@@ -12,7 +12,7 @@ Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) with:
 - **Bot Token Scopes**: `channels:history`, `channels:read`, `chat:write`, `files:read`, `files:write`, `reactions:write`, `app_mentions:read`
 - **Bot Events**: `message.channels`, `app_mention`
 
-> See the [full Slack app setup guide](../../apps/docs/content/1.getting-started/2.slack-setup.md) for step-by-step instructions.
+> See the [full Slack app setup guide](https://claude-channels.pleaseai.dev/getting-started/slack-setup) for step-by-step instructions.
 
 ### 2. Configure Credentials
 
@@ -81,10 +81,10 @@ Credentials are loaded from `~/.claude/channels/slack/.env`. Environment variabl
 
 ## Documentation
 
-For detailed guides, see the [docs site](../../apps/docs/):
+For detailed guides, see the [docs site](https://claude-channels.pleaseai.dev):
 
-- [Slack Setup Guide](../../apps/docs/content/1.getting-started/2.slack-setup.md) — Creating the Slack app, configuring scopes and events
-- [Usage Guide](../../apps/docs/content/1.getting-started/3.usage.md) — Messaging, attachments, tools reference, troubleshooting
+- [Slack Setup Guide](https://claude-channels.pleaseai.dev/getting-started/slack-setup) — Creating the Slack app, configuring scopes and events
+- [Usage Guide](https://claude-channels.pleaseai.dev/getting-started/usage) — Messaging, attachments, tools reference, troubleshooting
 
 ## Development
 

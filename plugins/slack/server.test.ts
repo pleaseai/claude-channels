@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeAll, describe, expect, test } from 'bun:test'
 
 /**
  * Tests for the thread-bound Slack channel server.
@@ -45,22 +45,27 @@ interface SlackMessage {
   files?: { id: string, name: string, mimetype: string, size: number }[]
 }
 
-function isInBoundThread(msg: SlackMessage, boundThreadTs: string): boolean {
-  if (!boundThreadTs)
-    return false
-  return msg.thread_ts === boundThreadTs
+function makeIsInBoundThread(boundThreadTs: string): (msg: SlackMessage) => boolean {
+  return function isInBoundThread(msg: SlackMessage): boolean {
+    if (!boundThreadTs)
+      return false
+    return msg.thread_ts === boundThreadTs
+  }
 }
 
-function dedup(ts: string, seen: Set<string>, cap: number): boolean {
-  if (seen.has(ts))
-    return false
-  seen.add(ts)
-  if (seen.size > cap) {
-    const first = seen.values().next().value
-    if (first)
-      seen.delete(first)
+function makeDedup(cap: number = 200): (ts: string) => boolean {
+  const seen = new Set<string>()
+  return function dedup(ts: string): boolean {
+    if (seen.has(ts))
+      return false
+    seen.add(ts)
+    if (seen.size > cap) {
+      const first = seen.values().next().value
+      if (first)
+        seen.delete(first)
+    }
+    return true
   }
-  return true
 }
 
 const RE_NAME_SANITIZE = /[[\]\r\n;]/g
@@ -94,6 +99,7 @@ describe('isInBoundThread', () => {
   const THREAD_TS = '1711234567.123456'
 
   test('accepts messages in bound thread', () => {
+    const isInBoundThread = makeIsInBoundThread(THREAD_TS)
     const msg: SlackMessage = {
       user: 'U123',
       channel: 'C456',
@@ -101,10 +107,11 @@ describe('isInBoundThread', () => {
       text: 'hello',
       thread_ts: THREAD_TS,
     }
-    expect(isInBoundThread(msg, THREAD_TS)).toBe(true)
+    expect(isInBoundThread(msg)).toBe(true)
   })
 
   test('rejects messages with different thread_ts', () => {
+    const isInBoundThread = makeIsInBoundThread(THREAD_TS)
     const msg: SlackMessage = {
       user: 'U123',
       channel: 'C456',
@@ -112,20 +119,22 @@ describe('isInBoundThread', () => {
       text: 'hello',
       thread_ts: '9999999999.000000',
     }
-    expect(isInBoundThread(msg, THREAD_TS)).toBe(false)
+    expect(isInBoundThread(msg)).toBe(false)
   })
 
   test('rejects messages without thread_ts (top-level messages)', () => {
+    const isInBoundThread = makeIsInBoundThread(THREAD_TS)
     const msg: SlackMessage = {
       user: 'U123',
       channel: 'C456',
       ts: '1711234568.000001',
       text: 'hello',
     }
-    expect(isInBoundThread(msg, THREAD_TS)).toBe(false)
+    expect(isInBoundThread(msg)).toBe(false)
   })
 
   test('rejects all messages when boundThreadTs is empty', () => {
+    const isInBoundThread = makeIsInBoundThread('')
     const msg: SlackMessage = {
       user: 'U123',
       channel: 'C456',
@@ -133,31 +142,36 @@ describe('isInBoundThread', () => {
       text: 'hello',
       thread_ts: THREAD_TS,
     }
-    expect(isInBoundThread(msg, '')).toBe(false)
+    expect(isInBoundThread(msg)).toBe(false)
   })
 })
 
 describe('dedup', () => {
   test('allows first occurrence', () => {
-    const seen = new Set<string>()
-    expect(dedup('ts1', seen, 200)).toBe(true)
+    const dedup = makeDedup(200)
+    expect(dedup('ts1')).toBe(true)
   })
 
   test('rejects duplicate', () => {
-    const seen = new Set<string>()
-    dedup('ts1', seen, 200)
-    expect(dedup('ts1', seen, 200)).toBe(false)
+    const dedup = makeDedup(200)
+    dedup('ts1')
+    expect(dedup('ts1')).toBe(false)
   })
 
-  test('caps at limit', () => {
-    const seen = new Set<string>()
+  test('caps at limit (RECENT_INBOUND_CAP = 200)', () => {
+    const RECENT_INBOUND_CAP = 200
+    const dedup = makeDedup(RECENT_INBOUND_CAP)
+    // Fill beyond cap using a small override for testability
+    const dedupSmall = makeDedup(3)
     for (let i = 0; i < 5; i++)
-      dedup(`ts${i}`, seen, 3)
-    expect(seen.size).toBe(3)
+      dedupSmall(`ts${i}`)
     // Oldest should have been evicted
-    expect(seen.has('ts0')).toBe(false)
-    expect(seen.has('ts1')).toBe(false)
-    expect(seen.has('ts4')).toBe(true)
+    expect(dedupSmall('ts0')).toBe(true) // evicted, so accepted again
+    expect(dedupSmall('ts4')).toBe(false) // still present
+    // Default cap doesn't evict within bounds
+    for (let i = 0; i < RECENT_INBOUND_CAP; i++)
+      dedup(`ts${i}`)
+    expect(dedup('ts0')).toBe(false) // still within cap, not evicted
   })
 })
 
@@ -185,8 +199,9 @@ describe('SLACK_CHANNEL_ID requirement', () => {
 describe('thread binding in source', () => {
   let source: string
 
-  test('loads source', async () => {
+  beforeAll(async () => {
     source = await Bun.file('plugins/slack/server.ts').text()
+    expect(source.length).toBeGreaterThan(0)
   })
 
   test('creates thread at startup', () => {
@@ -229,9 +244,21 @@ describe('thread binding in source', () => {
     expect(source).toContain('web.conversations.replies')
   })
 
-  test('react and edit validate message is in bound thread', () => {
-    // Both tools should call assertInBoundThread before operating
+  test('react, edit, and download validate message is in bound thread', () => {
+    // All mutation/fetch tools should call assertInBoundThread before operating
     expect(source).toContain('assertInBoundThread(messageId)')
+    expect(source).toContain('assertInBoundThread(messageTs)')
+  })
+
+  test('assertInBoundThread rejection is not catch-swallowed in react/edit_message', () => {
+    // The outer catch in the tool handler must propagate assertInBoundThread errors.
+    // Verify that react and edit_message do NOT wrap assertInBoundThread in their own try/catch.
+    // Extract the react and edit_message case blocks and confirm no inner try surrounds the assert call.
+    const reactBlock = source.slice(source.indexOf('case \'react\':'), source.indexOf('case \'edit_message\':'))
+    const editBlock = source.slice(source.indexOf('case \'edit_message\':'), source.indexOf('case \'download_attachment\':'))
+    // Neither block should have a try { ... } that would swallow the assertInBoundThread error
+    expect(reactBlock.indexOf('try {')).toBe(-1)
+    expect(editBlock.indexOf('try {')).toBe(-1)
   })
 
   test('file download uses atomic write', () => {

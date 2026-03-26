@@ -462,11 +462,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case 'download_attachment': {
-        // Fetch from thread replies
         const messageTs = args.message_id as string
+        await assertInBoundThread(messageTs)
         const result = await web.conversations.replies({
           channel: BOUND_CHANNEL,
           ts: boundThreadTs,
+          oldest: messageTs,
+          latest: messageTs,
+          inclusive: true,
+          limit: 1,
         })
         const msg = result.messages?.find(m => m.ts === messageTs)
         if (!msg?.files?.length) {
