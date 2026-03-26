@@ -1,0 +1,25 @@
+package.json
+  a7388c6919560d55 6
+apps/docs/bunfig.toml
+  a7388c6919560d55 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "0e502b46415719bf2f90b2440ebb3bdaa4b8efea",
+  "prompts": {
+    "a7388c6919560d55": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f8a426a-d197-4075-84e0-f2137111aaa3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 0,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
