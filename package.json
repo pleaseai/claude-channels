@@ -3,11 +3,13 @@
   "type": "module",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "bun@1.3.10",
   "author": "Minsu Lee (https://github.com/amondnet)",
   "license": "MIT",
   "repository": "pleaseai/claude-channels",
   "workspaces": [
-    "plugins/*"
+    "plugins/*",
+    "apps/*"
   ],
   "scripts": {
     "lint": "eslint --cache .",

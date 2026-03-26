@@ -2,6 +2,8 @@
 
 Channel plugins for [Claude Code](https://code.claude.com). Push messages from chat platforms into a running Claude Code session and let Claude reply back through the same channel.
 
+**[Documentation](https://claude-channels.pleaseai.dev)**
+
 ## Supported Channels
 
 | Channel         | Status      | Protocol    | Description                             |
