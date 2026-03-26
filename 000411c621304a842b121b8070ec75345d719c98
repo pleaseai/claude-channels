@@ -1,0 +1,23 @@
+apps/docs/CLAUDE.md
+  a7388c6919560d55 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "000411c621304a842b121b8070ec75345d719c98",
+  "prompts": {
+    "a7388c6919560d55": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f8a426a-d197-4075-84e0-f2137111aaa3",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
