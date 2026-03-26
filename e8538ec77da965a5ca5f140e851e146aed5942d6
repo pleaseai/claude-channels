@@ -1,0 +1,29 @@
+plugins/slack/server.test.ts
+  57e50ae5e4c126bf 1,48-53,56-67,102,114,126,137,151,156,161-165,167,169-174,202,204,247-248,250,253-261
+plugins/slack/server.ts
+  57e50ae5e4c126bf 466,470-473
+plugins/slack/README.md
+  57e50ae5e4c126bf 15,84,86-87
+apps/docs/content/1.getting-started/3.usage.md
+  57e50ae5e4c126bf 21,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "e8538ec77da965a5ca5f140e851e146aed5942d6",
+  "prompts": {
+    "57e50ae5e4c126bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "248400e3-65f6-490c-b28d-028c173547d0",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>",
+      "messages": [],
+      "total_additions": 154,
+      "total_deletions": 47,
+      "accepted_lines": 141,
+      "overriden_lines": 0
+    }
+  }
+}
