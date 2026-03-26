@@ -1,5 +1,5 @@
 ---
-name: access
+name: slack:access
 description: Manage Slack channel access — approve pairings, edit allowlists, set DM/group policy. Use when the user asks to pair, approve someone, check who's allowed, or change policy for the Slack channel.
 user-invocable: true
 allowed-tools:

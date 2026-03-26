@@ -190,5 +190,9 @@
       "autoUpdate": true
     }
   },
-  "language": "english"
+  "language": "english",
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [
+    { "marketplace": "claude-channels", "plugin": "slack" }
+  ]
 }

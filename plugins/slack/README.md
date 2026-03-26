@@ -9,31 +9,40 @@ Slack channel plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude
 Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps) with:
 
 - **Socket Mode** enabled (generates `xapp-` app token)
-- **Bot Token Scopes**: `channels:history`, `channels:read`, `chat:write`, `files:read`, `files:write`, `reactions:write`, `app_mentions:read`
-- **Bot Events**: `message.channels`, `app_mention`
+- **Bot Token Scopes**: `chat:write`, `users:read`, `reactions:write`, `files:read`, `files:write`, `app_mentions:read`
+- **Bot Events**: `app_mention`
+- For **channel mode**: add scopes `channels:history`, `channels:read` and event `message.channels`
+- For **DM mode**: add scopes `im:history`, `im:read`, `im:write` and event `message.im`; enable **App Home > Messages Tab**
 
 > See the [full Slack app setup guide](https://claude-channels.pleaseai.dev/getting-started/slack-setup) for step-by-step instructions.
 
 ### 2. Configure Credentials
 
+Choose one of two modes:
+
+**Channel mode** — threads in a shared channel:
 ```bash
 mkdir -p ~/.claude/channels/slack
 cat > ~/.claude/channels/slack/.env << 'EOF'
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_APP_TOKEN=xapp-your-app-token
-SLACK_CHANNEL_ID=C0123456789
+CLAUDE_SLACK_BOT_TOKEN=xoxb-your-bot-token
+CLAUDE_SLACK_APP_TOKEN=xapp-your-app-token
+CLAUDE_SLACK_CHANNEL_ID=C0123456789
 EOF
 ```
+Then invite the bot to the channel: `/invite @YourBotName`
 
-### 3. Invite the Bot
-
+**DM mode** — threads in a direct message with the bot:
+```bash
+mkdir -p ~/.claude/channels/slack
+cat > ~/.claude/channels/slack/.env << 'EOF'
+CLAUDE_SLACK_BOT_TOKEN=xoxb-your-bot-token
+CLAUDE_SLACK_APP_TOKEN=xapp-your-app-token
+CLAUDE_SLACK_DM_USER_ID=UYourSlackUserID
+EOF
 ```
-/invite @YourBotName
-```
+Get your user ID from Slack: **Profile > ⋮ > Copy member ID**
 
-in the Slack channel matching `SLACK_CHANNEL_ID`.
-
-### 4. Register MCP Server
+### 3. Register MCP Server
 
 Add to `~/.claude/settings.json` (global) or `.mcp.json` (per-project):
 
@@ -48,9 +57,9 @@ Add to `~/.claude/settings.json` (global) or `.mcp.json` (per-project):
 }
 ```
 
-### 5. Start a Session
+### 4. Start a Session
 
-Launch Claude Code. The plugin creates a new thread in the configured channel. Send messages in that thread to interact with Claude.
+Launch Claude Code. The plugin creates a new thread in the configured channel (or DM). Send messages in that thread to interact with Claude.
 
 ## Tools
 
@@ -73,9 +82,12 @@ Launch Claude Code. The plugin creates a new thread in the configured channel. S
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SLACK_BOT_TOKEN` | yes | Bot User OAuth Token (`xoxb-...`) |
-| `SLACK_APP_TOKEN` | yes | App-Level Token with `connections:write` (`xapp-...`) |
-| `SLACK_CHANNEL_ID` | yes | Channel ID where threads are created (`C...`) |
+| `CLAUDE_SLACK_BOT_TOKEN` | yes | Bot User OAuth Token (`xoxb-...`) |
+| `CLAUDE_SLACK_APP_TOKEN` | yes | App-Level Token with `connections:write` (`xapp-...`) |
+| `CLAUDE_SLACK_CHANNEL_ID` | one of these | Channel ID for channel thread mode (`C...`) |
+| `CLAUDE_SLACK_DM_USER_ID` | one of these | Slack user ID for DM thread mode (`U...`) |
+
+Set either `CLAUDE_SLACK_CHANNEL_ID` (channel mode) or `CLAUDE_SLACK_DM_USER_ID` (DM mode). If both are set, channel mode takes precedence.
 
 Credentials are loaded from `~/.claude/channels/slack/.env`. Environment variables take precedence over the file.
 

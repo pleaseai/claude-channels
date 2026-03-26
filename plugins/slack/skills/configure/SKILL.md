@@ -1,5 +1,5 @@
 ---
-name: configure
+name: slack:configure
 description: Set up the Slack channel — save the bot token and app token, review access policy. Use when the user pastes Slack tokens, asks to configure Slack, asks "how do I set this up" or "who can reach me," or wants to check channel status.
 user-invocable: true
 allowed-tools:
@@ -26,7 +26,7 @@ Arguments passed: `$ARGUMENTS`
 Read both state files and give the user a complete picture:
 
 1. **Tokens** — check `~/.claude/channels/slack/.env` for
-   `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`. Show set/not-set; if set, show
+   `CLAUDE_SLACK_BOT_TOKEN` and `CLAUDE_SLACK_APP_TOKEN`. Show set/not-set; if set, show
    first 6 chars masked.
 
 2. **Access** — read `~/.claude/channels/slack/access.json` (missing file
@@ -73,15 +73,91 @@ Drive the conversation this way:
 1. Treat `$ARGUMENTS` as two space-separated tokens. The bot token starts
    with `xoxb-` and the app token starts with `xapp-`.
 2. `mkdir -p ~/.claude/channels/slack`
-3. Read existing `.env` if present; update/add the `SLACK_BOT_TOKEN=` and
-   `SLACK_APP_TOKEN=` lines, preserve other keys. Write back, no quotes
+3. Read existing `.env` if present; update/add the `CLAUDE_SLACK_BOT_TOKEN=` and
+   `CLAUDE_SLACK_APP_TOKEN=` lines, preserve other keys. Write back, no quotes
    around the values.
 4. Confirm, then show the no-args status so the user sees where they stand.
 
 ### `clear` — remove tokens
 
-Delete the `SLACK_BOT_TOKEN=` and `SLACK_APP_TOKEN=` lines (or the file if
+Delete the `CLAUDE_SLACK_BOT_TOKEN=` and `CLAUDE_SLACK_APP_TOKEN=` lines (or the file if
 those are the only lines).
+
+---
+
+## Slack App setup guide
+
+When the user asks how to set up the Slack app, or when showing next steps
+for users without tokens, provide this guide:
+
+1. **Create app** — Go to https://api.slack.com/apps → **Create New App >
+   From scratch**. Name it (e.g. `Claude Code Bot`) and select the
+   workspace.
+
+2. **Enable Socket Mode** — **Settings > Socket Mode** → Enable. Generate
+   an App-Level Token with `connections:write` scope → copy the `xapp-`
+   token.
+
+3. **Event Subscriptions** — **Features > Event Subscriptions** → Enable.
+   Under **Subscribe to bot events**, add:
+   - `app_mention` — receive @-mentions in channels
+
+   Then add events for your chosen mode:
+   - **Channel mode**: `message.channels` (public) and/or `message.groups`
+     (private)
+   - **DM mode**: `message.im`
+
+4. **App Home** (DM mode only) — **Features > App Home > Show Tabs** →
+   Enable **Messages Tab** and check **"Allow users to send Slash
+   commands and messages from the messages tab"**.
+
+5. **Bot Token Scopes** — **Features > OAuth & Permissions > Scopes**, add
+   the **common** scopes plus the ones for your mode:
+
+   **Common (always required):**
+
+   | Scope | Purpose |
+   |---|---|
+   | `chat:write` | Send messages |
+   | `app_mentions:read` | Read @-mentions |
+   | `users:read` | Look up user info |
+   | `reactions:write` | Add emoji reactions |
+   | `files:read` | Access shared files |
+   | `files:write` | Upload files |
+
+   **Channel mode:**
+
+   | Scope | Purpose |
+   |---|---|
+   | `channels:history` | Read public channel messages |
+   | `channels:read` | Access public channels |
+   | `groups:history` | Read private channel messages (if private) |
+   | `groups:read` | Access private channels (if private) |
+
+   **DM mode:**
+
+   | Scope | Purpose |
+   |---|---|
+   | `im:history` | Read DM history |
+   | `im:read` | List DM conversations |
+   | `im:write` | Open DM conversations |
+
+6. **Install** — Click **Install to Workspace**, then copy the Bot User
+   OAuth Token (`xoxb-`).
+
+7. **Configure mode** — Add to `~/.claude/channels/slack/.env`:
+   - **Channel mode**: `CLAUDE_SLACK_CHANNEL_ID=C...` (get from channel
+     settings) and invite the bot to the channel.
+   - **DM mode**: `CLAUDE_SLACK_DM_USER_ID=U...` (get from Slack:
+     **Profile > ⋮ > Copy member ID**).
+
+8. **Register tokens** — Run:
+   ```
+   /slack:configure <xoxb-token> <xapp-token>
+   ```
+
+> **Scope changes require re-install.** If you add scopes after installing,
+> go back to **Install App** and click **Reinstall to Workspace**.
 
 ---
 

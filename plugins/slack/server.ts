@@ -3,7 +3,7 @@
  * Slack channel for Claude Code — thread-bound session.
  *
  * Each session creates a dedicated thread in the channel specified by
- * SLACK_CHANNEL_ID. All inbound/outbound messages are scoped to that thread.
+ * CLAUDE_SLACK_CHANNEL_ID. All inbound/outbound messages are scoped to that thread.
  * State lives in ~/.claude/channels/slack/.
  */
 
@@ -63,34 +63,35 @@ catch (err) {
     process.stderr.write(`slack channel: failed to read ${ENV_FILE}: ${err}\n`)
 }
 
-const BOT_TOKEN = process.env.SLACK_BOT_TOKEN
-const APP_TOKEN = process.env.SLACK_APP_TOKEN
-const CHANNEL_ID = process.env.SLACK_CHANNEL_ID
+const BOT_TOKEN = process.env.CLAUDE_SLACK_BOT_TOKEN
+const APP_TOKEN = process.env.CLAUDE_SLACK_APP_TOKEN
+const CHANNEL_ID = process.env.CLAUDE_SLACK_CHANNEL_ID
+const DM_USER_ID = process.env.CLAUDE_SLACK_DM_USER_ID
 
 if (!BOT_TOKEN || !APP_TOKEN) {
   process.stderr.write(
-    `slack channel: SLACK_BOT_TOKEN and SLACK_APP_TOKEN required\n`
+    `slack channel: CLAUDE_SLACK_BOT_TOKEN and CLAUDE_SLACK_APP_TOKEN required\n`
     + `  set in ${ENV_FILE}\n`
     + `  format:\n`
-    + `    SLACK_BOT_TOKEN=xoxb-...\n`
-    + `    SLACK_APP_TOKEN=xapp-...\n`,
+    + `    CLAUDE_SLACK_BOT_TOKEN=xoxb-...\n`
+    + `    CLAUDE_SLACK_APP_TOKEN=xapp-...\n`,
   )
   process.exit(1)
 }
 
-if (!CHANNEL_ID) {
+if (!CHANNEL_ID && !DM_USER_ID) {
   process.stderr.write(
-    `slack channel: SLACK_CHANNEL_ID required\n`
+    `slack channel: CLAUDE_SLACK_CHANNEL_ID or CLAUDE_SLACK_DM_USER_ID required\n`
     + `  set via environment variable or in ${ENV_FILE}\n`
     + `  format:\n`
-    + `    SLACK_CHANNEL_ID=C...\n`,
+    + `    CLAUDE_SLACK_CHANNEL_ID=C...   (channel thread mode)\n`
+    + `    CLAUDE_SLACK_DM_USER_ID=U...   (DM thread mode)\n`,
   )
   process.exit(1)
 }
 
-// After the guard above, CHANNEL_ID is guaranteed to be a non-empty string.
-// Re-bind as const to help TypeScript narrow the type.
-const BOUND_CHANNEL: string = CHANNEL_ID
+// Resolved in main() when DM_USER_ID is used; set immediately for channel mode.
+let BOUND_CHANNEL: string = CHANNEL_ID ?? ''
 
 /* ------------------------------------------------------------------ */
 /*  Slack clients                                                      */
@@ -639,6 +640,16 @@ async function main(): Promise<void> {
   }
   catch (err) {
     process.stderr.write(`slack channel: auth.test failed: ${err}\n`)
+  }
+
+  // Resolve DM channel if in DM mode
+  if (!BOUND_CHANNEL && DM_USER_ID) {
+    const dm = await web.conversations.open({ users: DM_USER_ID })
+    if (!dm.channel?.id) {
+      throw new Error(`failed to open DM with user ${DM_USER_ID}`)
+    }
+    BOUND_CHANNEL = dm.channel.id
+    process.stderr.write(`slack channel: DM mode — resolved channel ${BOUND_CHANNEL} for user ${DM_USER_ID}\n`)
   }
 
   // Create the bound thread

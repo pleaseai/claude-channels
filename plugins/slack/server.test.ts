@@ -185,11 +185,11 @@ describe('safeFileName', () => {
   })
 })
 
-describe('SLACK_CHANNEL_ID requirement', () => {
-  test('server.ts requires SLACK_CHANNEL_ID env var', async () => {
+describe('CLAUDE_SLACK_CHANNEL_ID requirement', () => {
+  test('server.ts requires CLAUDE_SLACK_CHANNEL_ID env var', async () => {
     // Verify the env var check exists in the source
     const source = await Bun.file('plugins/slack/server.ts').text()
-    expect(source).toContain('SLACK_CHANNEL_ID')
+    expect(source).toContain('CLAUDE_SLACK_CHANNEL_ID')
     expect(source).toContain('process.exit(1)')
     // Verify it checks for the channel ID
     expect(source).toContain('if (!CHANNEL_ID)')
