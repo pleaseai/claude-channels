@@ -5,30 +5,35 @@ Documentation site for claude-channels using Docus (Nuxt 4 + Nuxt Content).
 ## Commands
 
 ```bash
-cd apps/docs
-npm install       # Install dependencies (must use npm, NOT bun)
-npm run dev       # Start dev server at http://localhost:3000
-npm run build     # Generate static site to .output/public/
-npm run preview   # Preview built site
+bun install --linker hoisted   # Install dependencies (must use hoisted linker)
+bun run dev                    # Start dev server at http://localhost:3000
+bun run build                  # Generate static site to dist/
+bun run preview                # Preview built site
 ```
+
+## Deployment (Cloudflare Pages)
+
+- **Root directory**: `apps/docs`
+- **Build command**: `bun install --linker hoisted && bun run build`
+- **Build output directory**: `.output/public`
 
 ## Gotchas
 
-### Must use npm, not Bun, for dependency management
+### Must use `--linker hoisted` with Bun
 
-Bun's `.bun/` path layout causes Nitro's oxc transpiler to skip TypeScript files from Docus (it excludes `node_modules/` paths). This breaks `rollup-plugin-inject` which can't parse raw TypeScript. The confirmed workaround is to use npm for this workspace.
+Bun's default isolated linker stores packages under `node_modules/.bun/` via symlinks. Nitro's oxc transpiler skips TypeScript files from these paths, breaking Docus server-side `.ts` files. The `--linker hoisted` flag places packages directly in `node_modules/` without the `.bun/` indirection.
 
-- **Do**: `cd apps/docs && npm install`
-- **Don't**: Add `apps/*` to root `package.json` workspaces — this causes `bun install` to manage docs dependencies with the `.bun/` symlink layout
+- **Do**: `bun install --linker hoisted`
+- **Don't**: `bun install` (without `--linker hoisted`) — causes Rollup parse errors on Docus TypeScript files
 - **Upstream**: https://github.com/nuxt/nuxt/issues/28995
 
-### Not part of Bun workspaces
+### Part of Bun workspaces
 
-The `apps/docs` package is intentionally excluded from the root `package.json` workspaces array. This means Turborepo does NOT discover it as a workspace package — `turbo run build` at the root will not build docs. Build and dev must be run directly: `cd apps/docs && npm run build`.
+The `apps/docs` package is included in the root `package.json` workspaces (`apps/*`). Turborepo discovers it, but the hoisted linker flag must be used when installing.
 
 ### Nuxt build artifacts
 
-Build output goes to `.output/public/` (not `dist/`).
+Static generation output goes to `.output/public/`.
 
 ### Content file naming
 

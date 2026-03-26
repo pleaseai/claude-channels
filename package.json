@@ -7,7 +7,8 @@
   "license": "MIT",
   "repository": "pleaseai/claude-channels",
   "workspaces": [
-    "plugins/*"
+    "plugins/*",
+    "apps/*"
   ],
   "scripts": {
     "lint": "eslint --cache .",
