@@ -7,7 +7,7 @@ Documentation site for claude-channels using Docus (Nuxt 4 + Nuxt Content).
 ```bash
 bun install --linker hoisted   # Install dependencies (must use hoisted linker)
 bun run dev                    # Start dev server at http://localhost:3000
-bun run build                  # Generate static site to dist/
+bun run build                  # Generate static site to .output/public/
 bun run preview                # Preview built site
 ```
 
