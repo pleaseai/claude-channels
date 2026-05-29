@@ -1,0 +1,21 @@
+.please/docs/tracks/active/github-app-webhook-20260530/metadata.json
+  s_40c4db656d55bb::t_ddb51341c87ff2 4,6,10-11
+.please/docs/tracks.jsonl
+  s_40c4db656d55bb::t_986e6a3adbade9 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3361e8af370e432e69146c9988ef4f59a960aa0d",
+  "prompts": {},
+  "sessions": {
+    "s_40c4db656d55bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7da7c65-f8d3-4161-a933-4f6ce207b216",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
