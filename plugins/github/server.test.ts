@@ -51,7 +51,7 @@ afterAll(() => {
 const WATCHED = [{ owner: 'acme', repo: 'app' }]
 
 function mockClient(overrides: Partial<Record<string, unknown>> = {}): { client: GitHubClientLike, calls: Record<string, unknown[]> } {
-  const calls: Record<string, unknown[]> = { create: [], update: [], react: [], list: [], listRepo: [] }
+  const calls: Record<string, unknown[]> = { create: [], update: [], react: [], list: [], listRepo: [], rateLimit: [] }
   let nextId = 1000
   const client = {
     rest: {
@@ -70,13 +70,29 @@ function mockClient(overrides: Partial<Record<string, unknown>> = {}): { client:
         },
         listCommentsForRepo: async (p: unknown) => {
           calls.listRepo.push(p)
-          return { data: (overrides.listCommentsForRepo as unknown[]) ?? [] }
+          // Simulate Octokit throwing (e.g. 304 Not Modified, 429) when configured.
+          if (overrides.listThrow)
+            throw overrides.listThrow
+          return {
+            data: (overrides.listCommentsForRepo as unknown[]) ?? [],
+            headers: { etag: overrides.etag as string | undefined },
+          }
         },
       },
       reactions: {
         createForIssueComment: async (p: unknown) => {
           calls.react.push(p)
           return {}
+        },
+      },
+      rateLimit: {
+        get: async () => {
+          calls.rateLimit.push({})
+          if (overrides.rateLimitThrow)
+            throw overrides.rateLimitThrow
+          const core = (overrides.rateLimit as { remaining: number, reset: number } | undefined)
+            ?? { remaining: 5000, reset: 0 }
+          return { data: { resources: { core } } }
         },
       },
     },

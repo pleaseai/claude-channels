@@ -123,10 +123,16 @@ export interface GitHubClientLike {
       createComment: (p: { owner: string, repo: string, issue_number: number, body: string }) => Promise<{ data: { id: number, html_url: string } }>
       updateComment: (p: { owner: string, repo: string, comment_id: number, body: string }) => Promise<{ data: { id: number, html_url: string } }>
       listComments: (p: { owner: string, repo: string, issue_number: number, per_page: number }) => Promise<{ data: Array<{ id: number, body?: string, user?: { login?: string } | null, created_at: string }> }>
-      listCommentsForRepo: (p: { owner: string, repo: string, since?: string, sort: 'created' | 'updated', direction: 'asc' | 'desc', per_page: number }) => Promise<{ data: RawComment[] }>
+      listCommentsForRepo: (p: { owner: string, repo: string, since?: string, sort: 'created' | 'updated', direction: 'asc' | 'desc', per_page: number, headers?: { 'if-none-match'?: string } }) => Promise<{ data: RawComment[], headers?: { etag?: string } }>
     }
     reactions: {
       createForIssueComment: (p: { owner: string, repo: string, comment_id: number, content: string }) => Promise<unknown>
+    }
+    // Read the authenticated principal's rate-limit budget without spending it:
+    // GET /rate_limit is exempt from the primary rate limit. Drives proactive
+    // backoff (the poll response can't — a 304 omits the x-ratelimit-* headers).
+    rateLimit: {
+      get: () => Promise<{ data: { resources: { core: { remaining: number, reset: number } } } }>
     }
   }
 }
