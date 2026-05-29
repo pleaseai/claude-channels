@@ -1,0 +1,26 @@
+plugins/github/server.ts
+  s_d13d2f0b004d5d::t_d8abb2ad04d386 35
+  s_d13d2f0b004d5d::t_ada69ab303171c 49,238-272,434,452-460,508,614,633-634,650-651,654-661,679-681
+plugins/github/server.test.ts
+  s_d13d2f0b004d5d::t_559e1076df1211 3,15,27-32,59-74,77-80,123-130,173-191,193-198,229-235,333,374
+  s_d13d2f0b004d5d::t_2231e8a0d2aa14 192
+  s_d13d2f0b004d5d::t_d8abb2ad04d386 1
+plugins/github/skills/access/SKILL.md
+  s_d13d2f0b004d5d::t_854e65dcf8b075 30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f33fc07d4a6eeb6398d5e1e9b7bdaeddd5fe8778",
+  "prompts": {},
+  "sessions": {
+    "s_d13d2f0b004d5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0259fc0b-e040-45fa-b9b4-1c8109eb36e0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>"
+    }
+  }
+}
