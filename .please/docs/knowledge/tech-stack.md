@@ -20,6 +20,7 @@
 | -------- | -------------------------------------- | ----------- |
 | Slack    | `@slack/web-api`, `@slack/socket-mode` | Socket Mode |
 | Line     | TBD                                    | TBD         |
+| GitHub   | `@octokit/rest`                        | REST polling |
 
 ## Monorepo
 
