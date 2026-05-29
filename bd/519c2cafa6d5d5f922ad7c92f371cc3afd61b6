@@ -1,0 +1,9 @@
+.please/docs/tracks/active/github-channel-plugin-20260529/plan.md
+  ai_agent 169-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "bd519c2cafa6d5d5f922ad7c92f371cc3afd61b6",
+  "prompts": {}
+}
