@@ -93,9 +93,13 @@ export interface GitHubMessage {
 }
 
 interface RepoCursor {
-  // `since` is the only cursor field used today. Conditional requests
-  // (ETag/If-None-Match) are deferred — see plan Decision Log.
+  // Timestamp cursor: only deliver comments created after this instant.
   since?: string
+  // Weak/strong ETag from the previous `listCommentsForRepo` response, replayed
+  // as `If-None-Match` on the next poll so an unchanged repo answers 304 (which
+  // does not consume primary rate-limit quota). Round-trips via loadCursor,
+  // which passes `repos` through verbatim. Absent on first poll / legacy cursors.
+  etag?: string
 }
 
 export interface PollCursor {

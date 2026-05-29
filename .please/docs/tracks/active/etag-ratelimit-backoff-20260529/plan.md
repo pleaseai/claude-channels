@@ -84,7 +84,7 @@ tick() loop
 
 ## Tasks
 
-- [ ] T001 [P] Reintroduce `RepoCursor.etag` field and verify cursor round-trip persistence (file: plugins/github/server.ts)
+- [x] T001 [P] Reintroduce `RepoCursor.etag` field and verify cursor round-trip persistence (file: plugins/github/server.ts)
 - [ ] T002 Extend `GitHubClientLike`: `listCommentsForRepo` accepts request `headers` and returns response `headers`; add `rest.rateLimit.get`; update `mockClient` accordingly (file: plugins/github/server.ts) (depends on T001)
 - [ ] T003 Conditional poll + 304 handling in `pollRepo`: send `If-None-Match`, capture `etag`, treat `RequestError` status 304 as no-new-items (keep etag, advance `since`) (file: plugins/github/server.ts) (depends on T002)
 - [ ] T004 [P] Add pure rate-limit helpers: `resolveRateLimitThreshold`, `shouldPauseForRateLimit`, `retryAfterDelay` (file: plugins/github/server.ts)

@@ -249,6 +249,16 @@ describe('state IO round-trip', () => {
     saveCursor({ repos: { 'acme/app': { since: '2026-05-29T00:00:00Z' } } })
     expect(loadCursor().repos['acme/app'].since).toBe('2026-05-29T00:00:00Z')
   })
+  it('persists and reloads the etag alongside since', () => {
+    saveCursor({ repos: { 'acme/app': { since: '2026-05-29T00:00:00Z', etag: 'W/"abc123"' } } })
+    const loaded = loadCursor().repos['acme/app']
+    expect(loaded.since).toBe('2026-05-29T00:00:00Z')
+    expect(loaded.etag).toBe('W/"abc123"')
+  })
+  it('loads a legacy cursor without an etag', () => {
+    saveCursor({ repos: { 'foo/bar': { since: '2026-05-29T00:00:00Z' } } })
+    expect(loadCursor().repos['foo/bar'].etag).toBeUndefined()
+  })
 })
 
 describe('replyCore', () => {
