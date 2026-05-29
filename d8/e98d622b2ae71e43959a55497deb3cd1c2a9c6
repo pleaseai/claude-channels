@@ -1,0 +1,30 @@
+plugins/github/server.ts
+  s_40c4db656d55bb::t_bd412388b71c59 595
+  s_40c4db656d55bb::t_3444a73b86aa86 428-501
+  s_40c4db656d55bb::t_c1fc79fcb88f61 502-594,596-597
+  s_40c4db656d55bb::t_0acc55e38c8628 41-42
+  s_40c4db656d55bb::t_1c1e03085272e4 13-14
+plugins/github/server.test.ts
+  s_40c4db656d55bb::t_92ac20160250de 41-42
+  s_40c4db656d55bb::t_67cce2519875e0 43-46
+  s_40c4db656d55bb::t_fd2a8e5781111f 3
+  s_40c4db656d55bb::t_3c5565ec8e2ed8 5
+  s_40c4db656d55bb::t_1efc7bf25e9e4f 301-372
+  s_40c4db656d55bb::t_8870d60e72091d 373-499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d8e98d622b2ae71e43959a55497deb3cd1c2a9c6",
+  "prompts": {},
+  "sessions": {
+    "s_40c4db656d55bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7da7c65-f8d3-4161-a933-4f6ce207b216",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
