@@ -47,6 +47,10 @@ const CURSOR_FILE = join(STATE_DIR, 'cursor.json')
 
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const MAX_BACKOFF_MULTIPLIER = 12
+// Proactive backoff: pause polling when core quota drops to/below this many
+// requests, and probe GET /rate_limit every this-many ticks.
+const DEFAULT_RATELIMIT_THRESHOLD = 50
+const DEFAULT_RATELIMIT_POLL_EVERY = 10
 const MAX_COMMENT_LENGTH = 65536
 const RECENT_INBOUND_CAP = 500
 const MAX_FETCH_LIMIT = 100
@@ -291,6 +295,33 @@ export function retryAfterDelay(err: unknown): number | undefined {
     return undefined
   const secs = Number.parseInt(raw, 10)
   return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : undefined
+}
+
+/**
+ * Milliseconds to pause polling given a rate-limit snapshot, or 0 to keep
+ * polling. Pauses until the `core.reset` instant when remaining quota is at/below
+ * the threshold; clamps to 0 if the reset is already past.
+ */
+export function rateLimitPauseMs(remaining: number, threshold: number, resetEpochSec: number, nowMs: number): number {
+  if (!shouldPauseForRateLimit(remaining, threshold))
+    return 0
+  return Math.max(0, resetEpochSec * 1000 - nowMs)
+}
+
+/**
+ * Fetch the current core rate-limit budget and return how long to pause (ms).
+ * Fails open (returns 0) on any error — a rate-limit probe must never be the
+ * reason polling stops. `GET /rate_limit` does not itself consume quota.
+ */
+export async function checkRateLimitPause(client: GitHubClientLike, threshold: number, nowMs: number): Promise<number> {
+  try {
+    const { data } = await client.rest.rateLimit.get()
+    const core = data.resources.core
+    return rateLimitPauseMs(core.remaining, threshold, core.reset, nowMs)
+  }
+  catch {
+    return 0
+  }
 }
 
 /** Mention handle defaults to the authenticated login when unset. */
@@ -687,6 +718,8 @@ async function runServer(): Promise<void> {
   }
 
   const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
+  const rateLimitThreshold = resolveRateLimitThreshold(process.env.CLAUDE_GITHUB_RATELIMIT_THRESHOLD, DEFAULT_RATELIMIT_THRESHOLD)
+  const rateLimitPollEvery = resolvePollInterval(process.env.CLAUDE_GITHUB_RATELIMIT_POLL_EVERY, DEFAULT_RATELIMIT_POLL_EVERY)
   const octokit = new Octokit({ auth: token }) as unknown as GitHubClientLike
   const ownComments = new Set<number>()
   const dedup = new Dedup()
@@ -745,8 +778,25 @@ async function runServer(): Promise<void> {
   }
 
   let failures = 0
+  let tickCount = 0
   const tick = async (): Promise<void> => {
+    // Proactive rate-limit gate: probe GET /rate_limit every N ticks (it does not
+    // consume quota) and pause until the reset instant when remaining quota is
+    // low, rather than blindly polling into a 429.
+    if (tickCount % rateLimitPollEvery === 0) {
+      const pause = await checkRateLimitPause(octokit, rateLimitThreshold, Date.now())
+      if (pause > 0) {
+        tickCount++
+        process.stderr.write(`github channel: rate-limit low — pausing ~${Math.round(pause / 1000)}s until reset\n`)
+        setTimeout(() => {
+          void tick()
+        }, pause)
+        return
+      }
+    }
+    tickCount++
     const access = loadAccess()
+    let delay = pollInterval
     try {
       for (const ref of repos) {
         const key = `${ref.owner}/${ref.repo}`
@@ -757,11 +807,12 @@ async function runServer(): Promise<void> {
     }
     catch (err) {
       failures++
+      delay = backoffDelay(pollInterval, failures)
       process.stderr.write(`github channel: poll failed (${failures}): ${err}\n`)
     }
     setTimeout(() => {
       void tick()
-    }, backoffDelay(pollInterval, failures))
+    }, delay)
   }
 
   process.stderr.write(`github channel: polling ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} every ${pollInterval}ms (mention @${handle})\n`)

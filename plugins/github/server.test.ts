@@ -30,6 +30,8 @@ const {
   resolveRateLimitThreshold,
   shouldPauseForRateLimit,
   retryAfterDelay,
+  rateLimitPauseMs,
+  checkRateLimitPause,
   resolveHandle,
   seedCursor,
   rememberPostedIds,
@@ -233,6 +235,32 @@ describe('rate-limit helpers', () => {
     expect(retryAfterDelay({ response: { headers: {} } })).toBeUndefined()
     expect(retryAfterDelay(new Error('x'))).toBeUndefined()
     expect(retryAfterDelay({ response: { headers: { 'retry-after': 'soon' } } })).toBeUndefined()
+  })
+})
+
+describe('proactive rate-limit pause', () => {
+  it('does not pause when remaining is above the threshold', () => {
+    expect(rateLimitPauseMs(200, 50, 2000, 1000)).toBe(0)
+  })
+  it('pauses until the reset instant when remaining is low', () => {
+    // reset at epoch 2000s = 2_000_000ms; now = 1_000_000ms → pause 1_000_000ms
+    expect(rateLimitPauseMs(10, 50, 2000, 1_000_000)).toBe(1_000_000)
+  })
+  it('clamps the pause to 0 when reset is already in the past', () => {
+    expect(rateLimitPauseMs(10, 50, 1000, 2_000_000)).toBe(0)
+  })
+  it('checkRateLimitPause pauses when the client reports low remaining', async () => {
+    const { client, calls } = mockClient({ rateLimit: { remaining: 5, reset: 1000 } })
+    expect(await checkRateLimitPause(client, 50, 0)).toBe(1_000_000) // reset 1000s from epoch 0
+    expect(calls.rateLimit.length).toBe(1)
+  })
+  it('checkRateLimitPause returns 0 when quota is healthy', async () => {
+    const { client } = mockClient({ rateLimit: { remaining: 5000, reset: 1000 } })
+    expect(await checkRateLimitPause(client, 50, 0)).toBe(0)
+  })
+  it('checkRateLimitPause fails open (0) when rate_limit errors', async () => {
+    const { client } = mockClient({ rateLimitThrow: new Error('rate_limit down') })
+    expect(await checkRateLimitPause(client, 50, 0)).toBe(0)
   })
 })
 

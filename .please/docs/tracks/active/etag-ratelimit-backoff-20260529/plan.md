@@ -88,7 +88,7 @@ tick() loop
 - [x] T002 Extend `GitHubClientLike`: `listCommentsForRepo` accepts request `headers` and returns response `headers`; add `rest.rateLimit.get`; update `mockClient` accordingly (file: plugins/github/server.ts) (depends on T001)
 - [x] T003 Conditional poll + 304 handling in `pollRepo`: send `If-None-Match`, capture `etag`, treat `RequestError` status 304 as no-new-items (keep etag, advance `since`) (file: plugins/github/server.ts) (depends on T002)
 - [x] T004 [P] Add pure rate-limit helpers: `resolveRateLimitThreshold`, `shouldPauseForRateLimit`, `retryAfterDelay` (file: plugins/github/server.ts)
-- [ ] T005 Proactive rate-limit pause in `tick()`: periodic `rateLimit.get`, pause comment polling until `core.reset` when remaining ≤ threshold (file: plugins/github/server.ts) (depends on T002) (depends on T004)
+- [x] T005 Proactive rate-limit pause in `tick()`: periodic `rateLimit.get`, pause comment polling until `core.reset` when remaining ≤ threshold (file: plugins/github/server.ts) (depends on T002) (depends on T004)
 - [ ] T006 Honor `Retry-After` on 429 / secondary-rate-limit responses in the `tick()`/`pollRepo` error path (file: plugins/github/server.ts) (depends on T004)
 - [ ] T007 [P] Wire new env vars (`CLAUDE_GITHUB_RATELIMIT_THRESHOLD`, `CLAUDE_GITHUB_RATELIMIT_POLL_EVERY`) with defaults; update startup config help text + plugin INSTRUCTIONS/docs (file: plugins/github/server.ts)
 - [ ] T008 Regression verification: confirm unchanged comment-delivery behavior; `bun test plugins/github/`, `turbo check`, `bun run lint` green (file: plugins/github/server.test.ts) (depends on T003) (depends on T005) (depends on T006)
