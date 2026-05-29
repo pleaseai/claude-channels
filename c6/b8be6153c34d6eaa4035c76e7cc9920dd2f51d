@@ -1,0 +1,29 @@
+poc/etag-make-fetch-happen/README.md
+  s_69f6dc35affa23::t_da1f07de1aaf33 1-91
+poc/etag-make-fetch-happen/tsconfig.json
+  s_69f6dc35affa23::t_78c772c3232a9b 1-12
+poc/etag-make-fetch-happen/package.json
+  s_69f6dc35affa23::t_9f9fa6ad450c82 12-14
+  s_69f6dc35affa23::t_fffcc3fa54bb03 1-11,15-16
+poc/etag-make-fetch-happen/.gitignore
+  s_69f6dc35affa23::t_7c2bf88d335705 1-2
+poc/etag-make-fetch-happen/poc.ts
+  s_69f6dc35affa23::t_8aab0c2dbc252b 1-50,54,58-148
+  s_69f6dc35affa23::t_afc0b041688935 51-53,55-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c6b8be6153c34d6eaa4035c76e7cc9920dd2f51d",
+  "prompts": {},
+  "sessions": {
+    "s_69f6dc35affa23": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef6575f2-7624-4594-93c7-36c1bf1fe6b7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
