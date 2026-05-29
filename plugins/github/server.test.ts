@@ -498,6 +498,38 @@ describe('pollRepo', () => {
       pollRepo(client, ref, { since: 's' }, { ...condCtx, dedup: new Dedup() }, () => {}),
     ).rejects.toThrow('boom')
   })
+
+  it('delivers the same comment set across a 200 → 304 → 200 sequence (SC-5)', async () => {
+    const mk = (id: number, login: string) => ({
+      id,
+      body: '@mybot hi',
+      html_url: `h${id}`,
+      created_at: 't',
+      user: { login, id },
+      issue_url: 'https://api.github.com/repos/acme/app/issues/5',
+    })
+    const ctx = { ...condCtx, dedup: new Dedup() }
+    const got: number[] = []
+    const emit = (m: GitHubMessage): void => void got.push(m.commentId)
+
+    // Poll 1 — 200 with one comment, etag E1.
+    const { client: c1 } = mockClient({ listCommentsForRepo: [mk(1, 'alice')], etag: 'E1' })
+    let cursor = await pollRepo(c1, ref, {}, ctx, emit)
+    expect(cursor.etag).toBe('E1')
+
+    // Poll 2 — 304 Not Modified: nothing new delivered, etag retained.
+    const { client: c2 } = mockClient({ listThrow: Object.assign(new Error('nm'), { status: 304 }) })
+    cursor = await pollRepo(c2, ref, cursor, ctx, emit)
+    expect(cursor.etag).toBe('E1')
+
+    // Poll 3 — 200 with the old comment + a new one, etag E2.
+    const { client: c3 } = mockClient({ listCommentsForRepo: [mk(1, 'alice'), mk(2, 'bob')], etag: 'E2' })
+    cursor = await pollRepo(c3, ref, cursor, ctx, emit)
+    expect(cursor.etag).toBe('E2')
+
+    // Identical to pre-change behavior: id 1 once (dedup), id 2 once, 304 added nothing.
+    expect(got).toEqual([1, 2])
+  })
 })
 
 describe('handleToolCall', () => {
