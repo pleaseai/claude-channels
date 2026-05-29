@@ -1,0 +1,21 @@
+plugins/github/server.test.ts
+  s_69f6dc35affa23::t_18669f5bcd075a 501-532
+eslint.config.ts
+  s_69f6dc35affa23::t_783667878f94d1 11-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ca915e0ca2804d986deb32cff5e212e3e26a6b07",
+  "prompts": {},
+  "sessions": {
+    "s_69f6dc35affa23": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef6575f2-7624-4594-93c7-36c1bf1fe6b7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
