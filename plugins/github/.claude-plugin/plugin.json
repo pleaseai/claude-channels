@@ -1,0 +1,12 @@
+{
+  "name": "github",
+  "description": "GitHub channel for Claude Code — bridges issue/PR @mention comments into a session via REST polling, with built-in sender access control. Manage allowlist and policy via /github:access and credentials via /github:configure.",
+  "version": "0.0.1",
+  "keywords": [
+    "github",
+    "issues",
+    "pull-requests",
+    "channel",
+    "mcp"
+  ]
+}
