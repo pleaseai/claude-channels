@@ -1,0 +1,21 @@
+.claude/agent-memory/review-review-code-reviewer/project_channel-invariants.md
+  s_d13d2f0b004d5d::t_82689060b2c540 1-19
+.claude/agent-memory/review-review-code-reviewer/MEMORY.md
+  s_d13d2f0b004d5d::t_0d57239173bb28 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f7791da74c13e86236bbee6d6fa88b2226137baf",
+  "prompts": {},
+  "sessions": {
+    "s_d13d2f0b004d5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0259fc0b-e040-45fa-b9b4-1c8109eb36e0",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <amond@amond.net>"
+    }
+  }
+}
