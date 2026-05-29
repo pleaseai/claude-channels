@@ -52,9 +52,9 @@ CLAUDE_GITHUB_TRANSPORT │  PAT Octokit → tick()/pollRepo → [mention→gati
 ## Tasks
 
 - [x] T001 [P] Add `@octokit/auth-app` dep (file: plugins/github/package.json) — _node:crypto used for signatures instead of @octokit/webhooks; see Decision Log_
-- [ ] T002 [P] Add `resolveTransport(raw)` selector — `poll`|`webhook`, default `poll` (file: plugins/github/server.ts)
-- [ ] T003 [P] Add App-credential config parse/validate: app id, private key, installation id, webhook secret from env (file: plugins/github/server.ts)
-- [ ] T004 Add App-installation Octokit factory via `@octokit/auth-app`, returning a `GitHubClientLike` (file: plugins/github/server.ts) (depends on T001, T003)
+- [x] T002 [P] Add `resolveTransport(raw)` selector — `poll`|`webhook`, default `poll` (file: plugins/github/server.ts)
+- [x] T003 [P] Add App-credential config parse/validate: app id, private key, installation id, webhook secret from env (file: plugins/github/server.ts)
+- [x] T004 Add App-installation Octokit factory via `@octokit/auth-app`, returning a `GitHubClientLike` (file: plugins/github/server.ts) (depends on T001, T003)
 - [ ] T005 [P] Add `verifyWebhookSignature(secret, signatureHeader, rawBody)` (HMAC-SHA256, constant-time compare) (file: plugins/github/server.ts) (depends on T001)
 - [ ] T006 [P] Add `messageFromIssueCommentEvent(payload)` → `GitHubMessage | null` (issue + PR conversation comments; ignore non-`created` actions) (file: plugins/github/server.ts)
 - [ ] T007 Add `Bun.serve` webhook receiver wiring verify → map → shared `[mention→gating→dedup→emit]` pipeline (file: plugins/github/server.ts) (depends on T005, T006)

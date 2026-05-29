@@ -2,6 +2,7 @@ import type { Buffer } from 'node:buffer'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { GitHubClientLike, GitHubMessage } from './server'
 import { spawn } from 'node:child_process'
+import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,6 +35,9 @@ const {
   checkRateLimitPause,
   nextBackoffDelay,
   resolveHandle,
+  resolveTransport,
+  loadAppConfig,
+  createAppClient,
   seedCursor,
   rememberPostedIds,
   Dedup,
@@ -215,6 +219,76 @@ describe('config + backoff helpers', () => {
     seedCursor(cursor, [{ owner: 'acme', repo: 'app' }, { owner: 'foo', repo: 'bar' }], 'now')
     expect(cursor.repos['acme/app'].since).toBe('old') // preserved
     expect(cursor.repos['foo/bar'].since).toBe('now') // seeded
+  })
+})
+
+describe('resolveTransport', () => {
+  it('selects webhook only for the literal value (case-insensitive)', () => {
+    expect(resolveTransport('webhook')).toBe('webhook')
+    expect(resolveTransport('WebHook')).toBe('webhook')
+    expect(resolveTransport('  webhook  ')).toBe('webhook')
+  })
+  it('defaults to poll when unset', () => {
+    expect(resolveTransport(undefined)).toBe('poll')
+    expect(resolveTransport('')).toBe('poll')
+    expect(resolveTransport('poll')).toBe('poll')
+  })
+  it('falls back to poll for unrecognized values', () => {
+    expect(resolveTransport('socket')).toBe('poll')
+    expect(resolveTransport('webhooks')).toBe('poll')
+  })
+})
+
+describe('loadAppConfig', () => {
+  const full = {
+    CLAUDE_GITHUB_APP_ID: '123',
+    CLAUDE_GITHUB_APP_PRIVATE_KEY: '-----BEGIN KEY-----\nabc\n-----END KEY-----',
+    CLAUDE_GITHUB_APP_INSTALLATION_ID: '456',
+    CLAUDE_GITHUB_WEBHOOK_SECRET: 's3cr3t',
+  }
+  it('parses a complete credential set', () => {
+    const cfg = loadAppConfig(full)
+    expect(cfg.appId).toBe('123')
+    expect(cfg.installationId).toBe(456)
+    expect(cfg.webhookSecret).toBe('s3cr3t')
+  })
+  it('unescapes a single-line PEM with literal \\n escapes', () => {
+    const cfg = loadAppConfig({ ...full, CLAUDE_GITHUB_APP_PRIVATE_KEY: 'line1\\nline2\\nline3' })
+    expect(cfg.privateKey).toBe('line1\nline2\nline3')
+  })
+  it('preserves an already-multiline PEM verbatim', () => {
+    const cfg = loadAppConfig(full)
+    expect(cfg.privateKey).toBe('-----BEGIN KEY-----\nabc\n-----END KEY-----')
+  })
+  it('lists every missing key in the error', () => {
+    expect(() => loadAppConfig({})).toThrow(/CLAUDE_GITHUB_APP_ID.*CLAUDE_GITHUB_APP_PRIVATE_KEY.*CLAUDE_GITHUB_APP_INSTALLATION_ID.*CLAUDE_GITHUB_WEBHOOK_SECRET/)
+  })
+  it('rejects a non-numeric or non-positive installation id', () => {
+    expect(() => loadAppConfig({ ...full, CLAUDE_GITHUB_APP_INSTALLATION_ID: 'abc' })).toThrow(/installation/i)
+    expect(() => loadAppConfig({ ...full, CLAUDE_GITHUB_APP_INSTALLATION_ID: '0' })).toThrow(/positive integer/)
+  })
+})
+
+describe('createAppClient', () => {
+  // A real RSA key so @octokit/auth-app construction is exercised; no network
+  // call is made until a request is issued, so this stays a pure unit test.
+  const { privateKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  })
+  const cfg = { appId: '123', privateKey, installationId: 456, webhookSecret: 's' }
+
+  it('builds a client satisfying GitHubClientLike (outbound tool surface)', () => {
+    const client = createAppClient(cfg)
+    expect(typeof client.rest.issues.createComment).toBe('function')
+    expect(typeof client.rest.issues.updateComment).toBe('function')
+    expect(typeof client.rest.issues.listComments).toBe('function')
+    expect(typeof client.rest.issues.listCommentsForRepo).toBe('function')
+    expect(typeof client.rest.reactions.createForIssueComment).toBe('function')
+  })
+  it('does not throw at construction for a well-formed config', () => {
+    expect(() => createAppClient(cfg)).not.toThrow()
   })
 })
 

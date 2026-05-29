@@ -20,6 +20,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import { createAppAuth } from '@octokit/auth-app'
 import { Octokit } from '@octokit/rest'
 
 /* ------------------------------------------------------------------ */
@@ -33,6 +34,8 @@ const RE_ISSUE_NUMBER = /\/(?:issues|pulls)\/(\d+)(?:$|[#/])/
 const RE_NEWLINES = /[\r\n]+/g
 const RE_LEADING_NEWLINES = /^\n+/
 const RE_COMMENT_IDS = /ids?: ([\d, ]+)/
+// Literal backslash-n escapes in a single-line PEM private key (from .env files).
+const RE_ESCAPED_NEWLINE = /\\n/g
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -78,6 +81,20 @@ export interface AccessState {
   mode: 'allowlist' | 'open'
   allowedLogins: string[]
   configured: boolean
+}
+
+// Inbound transport: 'poll' (PAT + REST polling, the default) or 'webhook'
+// (GitHub App + signed webhook receiver behind a Cloudflare tunnel).
+export type Transport = 'poll' | 'webhook'
+
+// GitHub App credentials for webhook mode — supplied via env (the user creates
+// the App manually). Installation auth replaces the PAT for outbound REST calls
+// in this mode; webhookSecret verifies inbound payload signatures.
+export interface AppConfig {
+  appId: string
+  privateKey: string
+  installationId: number
+  webhookSecret: string
 }
 
 // PR *review* (diff-line) comments are out of scope for this track; the poll
@@ -338,6 +355,70 @@ export async function checkRateLimitPause(client: GitHubClientLike, threshold: n
 export function resolveHandle(mention: string | undefined, selfLogin: string): string {
   const trimmed = mention?.trim()
   return trimmed || selfLogin
+}
+
+/**
+ * Resolve the inbound transport from an env string. Anything other than
+ * "webhook" (case-insensitive) — including unset — yields "poll", so existing
+ * deployments stay on the polling path unless they explicitly opt in. The
+ * caller (runServer) warns when a non-empty value is unrecognized.
+ */
+export function resolveTransport(raw: string | undefined): Transport {
+  return raw?.trim().toLowerCase() === 'webhook' ? 'webhook' : 'poll'
+}
+
+/**
+ * Parse + validate GitHub App credentials from an env-like record (webhook
+ * mode). Throws listing every missing key so a misconfiguration fails fast with
+ * an actionable message. A single-line PEM with literal `\n` escapes (common in
+ * `.env` files) is unescaped to a real multi-line key.
+ */
+export function loadAppConfig(env: Record<string, string | undefined>): AppConfig {
+  const appId = env.CLAUDE_GITHUB_APP_ID?.trim()
+  const privateKeyRaw = env.CLAUDE_GITHUB_APP_PRIVATE_KEY
+  const installationIdRaw = env.CLAUDE_GITHUB_APP_INSTALLATION_ID?.trim()
+  const webhookSecret = env.CLAUDE_GITHUB_WEBHOOK_SECRET
+
+  const missing: string[] = []
+  if (!appId)
+    missing.push('CLAUDE_GITHUB_APP_ID')
+  if (!privateKeyRaw)
+    missing.push('CLAUDE_GITHUB_APP_PRIVATE_KEY')
+  if (!installationIdRaw)
+    missing.push('CLAUDE_GITHUB_APP_INSTALLATION_ID')
+  if (!webhookSecret)
+    missing.push('CLAUDE_GITHUB_WEBHOOK_SECRET')
+  if (missing.length > 0)
+    throw new Error(`webhook transport requires ${missing.join(', ')}`)
+
+  const installationId = Number.parseInt(installationIdRaw as string, 10)
+  if (!Number.isFinite(installationId) || installationId <= 0)
+    throw new Error(`invalid CLAUDE_GITHUB_APP_INSTALLATION_ID "${installationIdRaw}" — expected a positive integer`)
+
+  const privateKey = (privateKeyRaw as string).includes('\\n')
+    ? (privateKeyRaw as string).replace(RE_ESCAPED_NEWLINE, '\n')
+    : (privateKeyRaw as string)
+
+  return { appId: appId as string, privateKey, installationId, webhookSecret: webhookSecret as string }
+}
+
+/**
+ * Build an Octokit authenticated as a GitHub App installation. `@octokit/auth-app`
+ * is route-aware: requests to app-level routes (`/app/*`, used by webhook
+ * registration) sign with the app JWT, while repo-scoped calls (comment / react /
+ * edit) use the installation access token. So a single client serves both the
+ * outbound tools and startup webhook registration. Returned as `GitHubClientLike`
+ * so the existing tool cores accept it unchanged.
+ */
+export function createAppClient(cfg: AppConfig): GitHubClientLike {
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: cfg.appId,
+      privateKey: cfg.privateKey,
+      installationId: cfg.installationId,
+    },
+  }) as unknown as GitHubClientLike
 }
 
 /**
