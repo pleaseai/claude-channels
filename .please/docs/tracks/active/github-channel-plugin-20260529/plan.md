@@ -43,29 +43,29 @@ Configuration (env, from `~/.claude/channels/github/.env`): `CLAUDE_GITHUB_TOKEN
 
 ### Phase 1: Project Scaffold
 
-- [ ] T001 Create GitHub plugin package with workspace config (file: plugins/github/package.json) — `claude-channel-github`, `bin: ./server.ts`, deps `@modelcontextprotocol/sdk` + `@octokit/rest`
-- [ ] T002 Create plugin manifest and MCP server config (files: plugins/github/.claude-plugin/plugin.json, plugins/github/.mcp.json)
+- [x] T001 Create GitHub plugin package with workspace config (file: plugins/github/package.json) — `claude-channel-github`, `bin: ./server.ts`, deps `@modelcontextprotocol/sdk` + `@octokit/rest`
+- [x] T002 Create plugin manifest and MCP server config (files: plugins/github/.claude-plugin/plugin.json, plugins/github/.mcp.json)
 
 ### Phase 2: Core Server
 
-- [ ] T003 Implement env/config loading + MCP server scaffold (capabilities `tools` + `experimental['claude/channel']`, instructions) (file: plugins/github/server.ts) (depends on T001)
-- [ ] T004 Implement access control with sender gating on commenter login and atomic access.json (file: plugins/github/server.ts) (depends on T003)
-- [ ] T005 Implement Octokit init + authed-login resolution + poll loop with cursor/ETag and rate-limit backoff (file: plugins/github/server.ts) (depends on T003)
-- [ ] T006 Implement @mention detection, dedup, and `notifications/claude/channel` emit with full meta (file: plugins/github/server.ts) (depends on T004, T005)
+- [x] T003 Implement env/config loading + MCP server scaffold (capabilities `tools` + `experimental['claude/channel']`, instructions) (file: plugins/github/server.ts) (depends on T001)
+- [x] T004 Implement access control with sender gating on commenter login and atomic access.json (file: plugins/github/server.ts) (depends on T003)
+- [x] T005 Implement Octokit init + authed-login resolution + poll loop with cursor/ETag and rate-limit backoff (file: plugins/github/server.ts) (depends on T003)
+- [x] T006 Implement @mention detection, dedup, and `notifications/claude/channel` emit with full meta (file: plugins/github/server.ts) (depends on T004, T005)
 
 ### Phase 3: Outbound Tools
 
-- [ ] T007 Implement reply tool — post comment to thread from chat_id, outbound gating, chunking at ~65,536 chars (file: plugins/github/server.ts) (depends on T006)
-- [ ] T008 [P] Implement react tool (reactions API, validate name) (file: plugins/github/server.ts) (depends on T007)
-- [ ] T009 [P] Implement edit_message tool (edit own comments only) (file: plugins/github/server.ts) (depends on T007)
-- [ ] T010 [P] Implement fetch_messages tool (recent comments for an issue/PR) (file: plugins/github/server.ts) (depends on T007)
+- [x] T007 Implement reply tool — post comment to thread from chat_id, outbound gating, chunking at ~65,536 chars (file: plugins/github/server.ts) (depends on T006)
+- [x] T008 [P] Implement react tool (reactions API, validate name) (file: plugins/github/server.ts) (depends on T007)
+- [x] T009 [P] Implement edit_message tool (edit own comments only) (file: plugins/github/server.ts) (depends on T007)
+- [x] T010 [P] Implement fetch_messages tool (recent comments for an issue/PR) (file: plugins/github/server.ts) (depends on T007)
 
 ### Phase 4: Skills, Tests & Polish
 
-- [ ] T011 Create access management skill `/github:access` (allow/remove/policy/list) (file: plugins/github/skills/access/SKILL.md) (depends on T004)
-- [ ] T012 Create configure skill `/github:configure <token> [repos]` writing .env (0o600) + repos (file: plugins/github/skills/configure/SKILL.md) (depends on T003)
-- [ ] T013 Write server.test.ts — access load/save, sender gating, mention parsing, dedup/cursor, reply chunking, outbound gating (mock Octokit) (file: plugins/github/server.test.ts) (depends on T007)
-- [ ] T014 Write README.md + README.ko.md (PAT scopes, .env, --channels usage, skill flows) (files: plugins/github/README.md, plugins/github/README.ko.md) (depends on T012)
+- [x] T011 Create access management skill `/github:access` (allow/remove/policy/list) (file: plugins/github/skills/access/SKILL.md) (depends on T004)
+- [x] T012 Create configure skill `/github:configure <token> [repos]` writing .env (0o600) + repos (file: plugins/github/skills/configure/SKILL.md) (depends on T003)
+- [x] T013 Write server.test.ts — access load/save, sender gating, mention parsing, dedup/cursor, reply chunking, outbound gating (mock Octokit) (file: plugins/github/server.test.ts) (depends on T007)
+- [x] T014 Write README.md + README.ko.md (PAT scopes, .env, --channels usage, skill flows) (files: plugins/github/README.md, plugins/github/README.ko.md) (depends on T012)
 
 ## Key Files
 
@@ -135,3 +135,34 @@ _(updated during /please:implement)_
 - PR conversation comments use the issues API; PR *review* comments use a separate endpoint — T005/T006 must cover both, tagged via `comment_type`.
 - No DM pairing on GitHub — the allowlist is seeded explicitly via `/github:access allow` (closer to the iMessage model).
 - Must filter comments authored by the authed account to avoid self-mention loops.
+
+## Progress
+
+- [x] (2026-05-29) T001 Plugin scaffold — package.json (claude-channel-github + @octokit/rest)
+- [x] (2026-05-29) T002 plugin.json + .mcp.json
+- [x] (2026-05-29) T003 env/config loading + MCP server scaffold
+- [x] (2026-05-29) T004 access control (sender gating on commenter login, atomic access.json)
+- [x] (2026-05-29) T005 Octokit init + authed-login resolution + poll loop with cursor + rate-limit backoff
+- [x] (2026-05-29) T006 @mention detection, dedup, notifications/claude/channel emit with full meta
+- [x] (2026-05-29) T007 reply tool (outbound gating + chunking)
+- [x] (2026-05-29) T008 react tool
+- [x] (2026-05-29) T009 edit_message tool (own-comment guard)
+- [x] (2026-05-29) T010 fetch_messages tool
+- [x] (2026-05-29) T011 /github:access skill
+- [x] (2026-05-29) T012 /github:configure skill
+- [x] (2026-05-29) T013 server.test.ts (33 tests: pure helpers, cores, dispatch, pollRepo, loadDotEnv, MCP-stdio integration)
+- [x] (2026-05-29) T014 README.md + README.ko.md
+
+## Outcomes & Retrospective
+
+### What Was Shipped
+
+- GitHub channel plugin (`plugins/github/`, single-file `server.ts`) — REST polling of watched repos for @mention issue/PR comments, four tools (reply, react, edit_message, fetch_messages), sender gating on commenter login, atomic state (access.json, cursor.json), rate-limit backoff.
+- `/github:access` and `/github:configure` skills; English + Korean READMEs.
+- 33 tests passing; coverage 85.71% funcs / 82.41% lines; eslint + tsc clean.
+
+### Decisions / Notes
+
+- Polling (not webhooks) — local subprocess has no public URL. `since`-cursor + comment-id dedup; ETag deferred to avoid Octokit 304 fragility.
+- PR review comments (diff-line) deferred — inbound covers issue + PR conversation comments (`issues.listCommentsForRepo`), tagged `comment_type` issue|pr. Follow-up: add `pulls.listReviewCommentsForRepo`.
+- Repo labels `type/feature`/`status/draft` do not exist in this repo; Issue #6 created without labels.
