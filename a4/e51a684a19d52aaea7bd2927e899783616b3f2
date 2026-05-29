@@ -1,0 +1,31 @@
+.please/docs/tracks/active/github-app-webhook-20260530/plan.md
+  s_40c4db656d55bb::t_a202cfb9f9d578 55-57
+plugins/github/server.test.ts
+  s_40c4db656d55bb::t_7ea6e8359735ae 40
+  s_40c4db656d55bb::t_abe6a6710f5b47 272-294
+  s_40c4db656d55bb::t_146ed052432548 5
+  s_40c4db656d55bb::t_2fdc0aa8e332b8 38-39
+  s_40c4db656d55bb::t_6875c3149c40c5 225-271
+plugins/github/server.ts
+  s_40c4db656d55bb::t_d8ff81871ec77e 37-38
+  s_40c4db656d55bb::t_a51cdb61936d79 361-405
+  s_40c4db656d55bb::t_60ff13968c838f 406-423
+  s_40c4db656d55bb::t_90afe4b903207f 23
+  s_40c4db656d55bb::t_a98334b3d5fbf1 86-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a4e51a684a19d52aaea7bd2927e899783616b3f2",
+  "prompts": {},
+  "sessions": {
+    "s_40c4db656d55bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7da7c65-f8d3-4161-a933-4f6ce207b216",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
