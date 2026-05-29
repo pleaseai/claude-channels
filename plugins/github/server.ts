@@ -10,6 +10,10 @@
  * channels use). State lives in ~/.claude/channels/github/.
  */
 
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { Buffer } from 'node:buffer'
+import { spawn } from 'node:child_process'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -20,6 +24,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import { createAppAuth } from '@octokit/auth-app'
 import { Octokit } from '@octokit/rest'
 
 /* ------------------------------------------------------------------ */
@@ -33,6 +38,16 @@ const RE_ISSUE_NUMBER = /\/(?:issues|pulls)\/(\d+)(?:$|[#/])/
 const RE_NEWLINES = /[\r\n]+/g
 const RE_LEADING_NEWLINES = /^\n+/
 const RE_COMMENT_IDS = /ids?: ([\d, ]+)/
+// Literal backslash-n escapes in a single-line PEM private key (from .env files).
+const RE_ESCAPED_NEWLINE = /\\n/g
+// A well-formed GitHub X-Hub-Signature-256 header: "sha256=" + 64 hex chars.
+const RE_SHA256_SIGNATURE = /^sha256=[0-9a-f]{64}$/i
+// A TryCloudflare quick-tunnel URL, as printed in cloudflared's startup log.
+const RE_TRYCLOUDFLARE_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i
+// cloudflared "tunnel is up" signal for a named tunnel (no URL is printed).
+const RE_TUNNEL_READY = /Registered tunnel connection|Connection \S+ registered/i
+// Trailing slash(es) on a base URL, trimmed before appending the webhook path.
+const RE_TRAILING_SLASH = /\/+$/
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -52,6 +67,12 @@ const MAX_BACKOFF_MULTIPLIER = 12
 const DEFAULT_RATELIMIT_THRESHOLD = 50
 const DEFAULT_RATELIMIT_POLL_EVERY = 10
 const MAX_COMMENT_LENGTH = 65536
+// Local port the webhook receiver binds (cloudflared forwards to it).
+const DEFAULT_WEBHOOK_PORT = 8765
+// Reject webhook bodies larger than this before/while buffering — GitHub's
+// documented maximum payload is 25 MB, so anything bigger is malformed or
+// hostile. Bounds the memory an unauthenticated request can force us to buffer.
+const MAX_WEBHOOK_BODY_BYTES = 25 * 1024 * 1024
 const RECENT_INBOUND_CAP = 500
 const MAX_FETCH_LIMIT = 100
 const VALID_REACTIONS: ReadonlySet<string> = new Set([
@@ -78,6 +99,20 @@ export interface AccessState {
   mode: 'allowlist' | 'open'
   allowedLogins: string[]
   configured: boolean
+}
+
+// Inbound transport: 'poll' (PAT + REST polling, the default) or 'webhook'
+// (GitHub App + signed webhook receiver behind a Cloudflare tunnel).
+export type Transport = 'poll' | 'webhook'
+
+// GitHub App credentials for webhook mode — supplied via env (the user creates
+// the App manually). Installation auth replaces the PAT for outbound REST calls
+// in this mode; webhookSecret verifies inbound payload signatures.
+export interface AppConfig {
+  appId: string
+  privateKey: string
+  installationId: number
+  webhookSecret: string
 }
 
 // PR *review* (diff-line) comments are out of scope for this track; the poll
@@ -338,6 +373,492 @@ export async function checkRateLimitPause(client: GitHubClientLike, threshold: n
 export function resolveHandle(mention: string | undefined, selfLogin: string): string {
   const trimmed = mention?.trim()
   return trimmed || selfLogin
+}
+
+/**
+ * Resolve the inbound transport from an env string. Anything other than
+ * "webhook" (case-insensitive) — including unset — yields "poll", so existing
+ * deployments stay on the polling path unless they explicitly opt in. The
+ * caller (runServer) warns when a non-empty value is unrecognized.
+ */
+export function resolveTransport(raw: string | undefined): Transport {
+  return raw?.trim().toLowerCase() === 'webhook' ? 'webhook' : 'poll'
+}
+
+/**
+ * Parse + validate GitHub App credentials from an env-like record (webhook
+ * mode). Throws listing every missing key so a misconfiguration fails fast with
+ * an actionable message. A single-line PEM with literal `\n` escapes (common in
+ * `.env` files) is unescaped to a real multi-line key.
+ */
+export function loadAppConfig(env: Record<string, string | undefined>): AppConfig {
+  const appId = env.CLAUDE_GITHUB_APP_ID?.trim()
+  const privateKeyRaw = env.CLAUDE_GITHUB_APP_PRIVATE_KEY
+  const installationIdRaw = env.CLAUDE_GITHUB_APP_INSTALLATION_ID?.trim()
+  const webhookSecret = env.CLAUDE_GITHUB_WEBHOOK_SECRET
+
+  const missing: string[] = []
+  if (!appId)
+    missing.push('CLAUDE_GITHUB_APP_ID')
+  if (!privateKeyRaw)
+    missing.push('CLAUDE_GITHUB_APP_PRIVATE_KEY')
+  if (!installationIdRaw)
+    missing.push('CLAUDE_GITHUB_APP_INSTALLATION_ID')
+  if (!webhookSecret)
+    missing.push('CLAUDE_GITHUB_WEBHOOK_SECRET')
+  if (missing.length > 0)
+    throw new Error(`webhook transport requires ${missing.join(', ')}`)
+
+  const installationId = Number.parseInt(installationIdRaw as string, 10)
+  if (!Number.isFinite(installationId) || installationId <= 0)
+    throw new Error(`invalid CLAUDE_GITHUB_APP_INSTALLATION_ID "${installationIdRaw}" — expected a positive integer`)
+
+  const privateKey = (privateKeyRaw as string).includes('\\n')
+    ? (privateKeyRaw as string).replace(RE_ESCAPED_NEWLINE, '\n')
+    : (privateKeyRaw as string)
+
+  return { appId: appId as string, privateKey, installationId, webhookSecret: webhookSecret as string }
+}
+
+/**
+ * Build an Octokit authenticated as a GitHub App installation. `@octokit/auth-app`
+ * is route-aware: requests to app-level routes (`/app/*`, used by webhook
+ * registration) sign with the app JWT, while repo-scoped calls (comment / react /
+ * edit) use the installation access token. So a single client serves both the
+ * outbound tools and startup webhook registration. Returned as `GitHubClientLike`
+ * so the existing tool cores accept it unchanged.
+ */
+export function createAppClient(cfg: AppConfig): GitHubClientLike {
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: cfg.appId,
+      privateKey: cfg.privateKey,
+      installationId: cfg.installationId,
+    },
+  }) as unknown as GitHubClientLike
+}
+
+/* ------------------------------------------------------------------ */
+/*  Webhook transport helpers (pure; exported for unit tests)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Verify a GitHub webhook HMAC-SHA256 signature (the `X-Hub-Signature-256`
+ * header) against the shared secret and the exact raw request body. Returns
+ * false — never throws — for a missing/malformed header or a length mismatch, so
+ * a forged or unsigned payload is simply rejected. Uses a constant-time compare
+ * to avoid leaking the expected digest via timing.
+ */
+export function verifyWebhookSignature(
+  secret: string,
+  signatureHeader: string | undefined | null,
+  rawBody: string | Buffer,
+): boolean {
+  if (!secret || !signatureHeader || !RE_SHA256_SIGNATURE.test(signatureHeader))
+    return false
+  const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`
+  const got = Buffer.from(signatureHeader)
+  const want = Buffer.from(expected)
+  // timingSafeEqual throws on length mismatch — guard first (also a fast reject).
+  return got.length === want.length && timingSafeEqual(got, want)
+}
+
+// Minimal structural subset of a GitHub `issue_comment` webhook payload — only
+// the fields the mapper reads. Mirrors the RawComment approach (avoid pulling a
+// full @octokit/webhooks-types dependency in for a single event shape).
+export interface IssueCommentEvent {
+  action?: string
+  comment?: {
+    id?: number
+    body?: string
+    html_url?: string
+    created_at?: string
+    user?: { login?: string, id?: number } | null
+  } | null
+  issue?: {
+    number?: number
+    // Present (non-null) only when the comment is on a pull request.
+    pull_request?: unknown
+  } | null
+  repository?: { full_name?: string } | null
+}
+
+/**
+ * Map an `issue_comment` webhook payload to a GitHubMessage, or null when the
+ * event is not a newly-created comment or is missing required fields. Produces
+ * the same shape the poll path emits, so downstream gating/dedup/emit and the
+ * resulting <channel> event are identical across transports. A `pull_request`
+ * field on the issue marks the comment as a PR-conversation comment.
+ */
+export function messageFromIssueCommentEvent(event: IssueCommentEvent): GitHubMessage | null {
+  if (event.action !== 'created')
+    return null
+  const c = event.comment
+  const issue = event.issue
+  const repo = event.repository?.full_name
+  const login = c?.user?.login
+  if (!c?.id || !c.html_url || !c.created_at || !issue?.number || !repo || !login)
+    return null
+  return {
+    repo,
+    issueNumber: issue.number,
+    commentId: c.id,
+    user: login,
+    userId: c.user?.id ?? 0,
+    body: c.body ?? '',
+    htmlUrl: c.html_url,
+    createdAt: c.created_at,
+    commentType: issue.pull_request ? 'pr' : 'issue',
+  }
+}
+
+/** Default path the webhook receiver listens on (and registers with GitHub). */
+export const WEBHOOK_PATH = '/webhook'
+
+// Everything the webhook pipeline needs, injected so it can be unit-tested
+// without binding a port or reading the real filesystem. `loadAccess` is a
+// thunk so the allowlist is re-read per delivery (matching the poll loop, which
+// calls loadAccess() each tick).
+export interface WebhookContext {
+  secret: string
+  watched: RepoRef[]
+  handle: string
+  selfLogin: string
+  dedup: Dedup
+  loadAccess: () => AccessState
+  emit: (msg: GitHubMessage) => void
+  path?: string
+  // Max accepted body size in bytes (defaults to MAX_WEBHOOK_BODY_BYTES).
+  maxBodyBytes?: number
+}
+
+/**
+ * Run a single issue_comment payload through the SAME inbound filters as the
+ * poll loop — dedup, self-author, mention match, watched-repo gate, sender
+ * allowlist — emitting only when all pass. Returns the emitted message (or null
+ * when filtered) for testability. Filter order mirrors pollRepo so the two
+ * transports deliver identically.
+ */
+export function processIssueCommentEvent(payload: IssueCommentEvent, ctx: WebhookContext): GitHubMessage | null {
+  const msg = messageFromIssueCommentEvent(payload)
+  if (!msg)
+    return null
+  if (!ctx.dedup.check(msg.commentId))
+    return null
+  if (msg.user === ctx.selfLogin)
+    return null
+  if (!mentionsHandle(msg.body, ctx.handle))
+    return null
+  const [owner, repo] = splitRepo(msg.repo)
+  if (!isWatchedRepo(ctx.watched, owner, repo))
+    return null
+  if (!isAllowed(ctx.loadAccess(), msg.user))
+    return null
+  ctx.emit(msg)
+  return msg
+}
+
+/**
+ * Fetch handler for the webhook receiver (exported so it can be unit-tested with
+ * constructed Request objects, no port binding). Rejects wrong path/method and
+ * bad/forged signatures; acknowledges every correctly-signed delivery with 200
+ * (even ignored event types) so GitHub does not retry. The raw body is read once
+ * and used for BOTH signature verification and parsing — re-serializing JSON
+ * would change the bytes and break the HMAC.
+ */
+export async function handleWebhookRequest(req: Request, ctx: WebhookContext): Promise<Response> {
+  const path = ctx.path ?? WEBHOOK_PATH
+  if (new URL(req.url).pathname !== path)
+    return new Response('not found', { status: 404 })
+  if (req.method !== 'POST')
+    return new Response('method not allowed', { status: 405 })
+
+  // Reject oversized payloads before (Content-Length, fast but attacker-spoofable)
+  // and after (raw byte length, the reliable enforcer) buffering — a public
+  // unauthenticated endpoint must not let one request balloon memory.
+  const maxBytes = ctx.maxBodyBytes ?? MAX_WEBHOOK_BODY_BYTES
+  const declared = Number.parseInt(req.headers.get('content-length') ?? '', 10)
+  if (Number.isFinite(declared) && declared > maxBytes)
+    return new Response('payload too large', { status: 413 })
+
+  const raw = await req.text()
+  if (raw.length > maxBytes)
+    return new Response('payload too large', { status: 413 })
+  if (!verifyWebhookSignature(ctx.secret, req.headers.get('x-hub-signature-256'), raw))
+    return new Response('invalid signature', { status: 401 })
+
+  // Only issue_comment is in scope (parity with polling); acknowledge anything
+  // else (ping, etc.) so GitHub marks the delivery successful.
+  if (req.headers.get('x-github-event') === 'issue_comment') {
+    let payload: IssueCommentEvent
+    try {
+      payload = JSON.parse(raw) as IssueCommentEvent
+    }
+    catch {
+      return new Response('invalid json', { status: 400 })
+    }
+    processIssueCommentEvent(payload, ctx)
+  }
+  return new Response('ok', { status: 200 })
+}
+
+// Handle to a running webhook receiver.
+export interface WebhookServerHandle {
+  port: number
+  stop: () => void
+}
+
+/**
+ * Bind the webhook receiver to `port` (0 = an ephemeral free port). Thin wrapper
+ * over Bun.serve; all request logic lives in handleWebhookRequest.
+ */
+export function startWebhookServer(ctx: WebhookContext, port: number): WebhookServerHandle {
+  const server = Bun.serve({
+    port,
+    fetch: (req: Request) => handleWebhookRequest(req, ctx),
+  })
+  return { port: server.port ?? port, stop: () => server.stop(true) }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Cloudflare tunnel (cloudflared subprocess)                         */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_TUNNEL_READY_TIMEOUT_MS = 30000
+
+export type TunnelMode = 'quick' | 'named'
+
+export interface TunnelConfig {
+  mode: TunnelMode
+  localPort: number
+  // named-tunnel only:
+  name?: string // cloudflared tunnel name/UUID to `run`
+  hostname?: string // the public hostname mapped to the tunnel (the resulting URL)
+}
+
+export interface TunnelHandle {
+  url: string
+  stop: () => void
+}
+
+export interface TunnelDeps {
+  // Injectable for tests; defaults to node:child_process spawn.
+  spawn?: (cmd: string, args: string[]) => ChildProcessWithoutNullStreams
+  readyTimeoutMs?: number
+  // Called if cloudflared exits AFTER the tunnel became ready (i.e. an
+  // unexpected death, not an intentional stop()). Defaults to logging on stderr
+  // and exiting non-zero so a supervisor restarts the channel — otherwise the
+  // process would idle with a dead tunnel and silently stop receiving webhooks.
+  onTunnelDown?: (code: number | null) => void
+}
+
+/**
+ * Extract a TryCloudflare quick-tunnel URL (`https://<sub>.trycloudflare.com`)
+ * from a single cloudflared log line, or null if the line has none. Named
+ * tunnels do not print a URL — their public hostname comes from config — so this
+ * is only used in quick mode.
+ */
+export function parseTunnelUrl(line: string): string | null {
+  const m = RE_TRYCLOUDFLARE_URL.exec(line)
+  return m ? m[0] : null
+}
+
+/**
+ * Build the cloudflared argv for a tunnel config. Quick tunnels are ephemeral
+ * and print a `*.trycloudflare.com` URL; named tunnels route a preconfigured
+ * tunnel (stable hostname via DNS) to the local receiver.
+ */
+export function cloudflaredArgs(cfg: TunnelConfig): string[] {
+  const base = ['tunnel', '--url', `http://localhost:${cfg.localPort}`]
+  return cfg.mode === 'named' ? [...base, 'run', cfg.name as string] : base
+}
+
+/**
+ * Spawn cloudflared and resolve once the tunnel is ready: for a quick tunnel,
+ * when the `*.trycloudflare.com` URL is parsed from its log; for a named tunnel,
+ * when a connection-registered line appears (the URL is the configured
+ * hostname). Rejects if the process exits before becoming ready or the readiness
+ * timeout elapses — so webhook startup fails loudly rather than silently never
+ * receiving deliveries. The returned handle's `stop()` terminates the process.
+ */
+export function startTunnel(cfg: TunnelConfig, deps: TunnelDeps = {}): Promise<TunnelHandle> {
+  if (cfg.mode === 'named' && (!cfg.name || !cfg.hostname))
+    return Promise.reject(new Error('named tunnel requires both a tunnel name and a public hostname'))
+
+  const spawnFn = deps.spawn ?? ((cmd, args) => spawn(cmd, args))
+  const timeoutMs = deps.readyTimeoutMs ?? DEFAULT_TUNNEL_READY_TIMEOUT_MS
+  const onTunnelDown = deps.onTunnelDown ?? ((code: number | null): void => {
+    process.stderr.write(`github channel: cloudflared tunnel exited after startup (code ${code}) — webhook delivery has stopped\n`)
+    process.exit(1)
+  })
+
+  return new Promise<TunnelHandle>((resolve, reject) => {
+    const child = spawnFn('cloudflared', cloudflaredArgs(cfg))
+    let settled = false
+    let stopping = false
+    let timer: ReturnType<typeof setTimeout>
+    const stop = (): void => {
+      stopping = true
+      try {
+        child.kill('SIGTERM')
+      }
+      catch {
+        // process already gone — nothing to clean up.
+      }
+    }
+    const finish = (fn: () => void): void => {
+      if (settled)
+        return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
+    // Resolve as ready, and from now on treat an unexpected cloudflared exit as
+    // fatal (the pre-ready exit handler below is already a no-op once settled).
+    const resolveReady = (url: string): void => finish(() => {
+      child.on('exit', (code) => {
+        if (!stopping)
+          onTunnelDown(code)
+      })
+      resolve({ url, stop })
+    })
+    const onLine = (line: string): void => {
+      if (cfg.mode === 'quick') {
+        const url = parseTunnelUrl(line)
+        if (url)
+          resolveReady(url)
+      }
+      else if (RE_TUNNEL_READY.test(line)) {
+        resolveReady(`https://${cfg.hostname}`)
+      }
+    }
+    const onData = (buf: unknown): void => {
+      for (const line of String(buf).split('\n')) {
+        if (line.trim())
+          onLine(line)
+      }
+    }
+    // cloudflared logs to stderr; read stdout too for robustness.
+    child.stdout?.on('data', onData)
+    child.stderr?.on('data', onData)
+    child.on('error', err => finish(() => reject(err)))
+    child.on('exit', code => finish(() => reject(new Error(`cloudflared exited before the tunnel was ready (code ${code})`))))
+    timer = setTimeout(() => {
+      finish(() => {
+        stop()
+        reject(new Error(`cloudflared: tunnel did not become ready within ${timeoutMs}ms`))
+      })
+    }, timeoutMs)
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/*  Webhook URL registration (App-level: PATCH /app/hook/config)       */
+/* ------------------------------------------------------------------ */
+
+// Minimal subset of the App-authenticated client used to update the App's own
+// webhook config. `@octokit/auth-app` signs this `/app/*` route with the JWT.
+export interface AppWebhookClientLike {
+  rest: {
+    apps: {
+      updateWebhookConfigForApp: (p: { url: string, secret?: string, content_type?: string }) => Promise<unknown>
+    }
+  }
+}
+
+/** Join a tunnel base URL and the webhook path into the full delivery URL. */
+export function webhookDeliveryUrl(baseUrl: string, path: string = WEBHOOK_PATH): string {
+  return `${baseUrl.replace(RE_TRAILING_SLASH, '')}${path}`
+}
+
+/**
+ * Point the GitHub App's webhook at the current tunnel URL (+ secret) via
+ * `PATCH /app/hook/config`. Idempotent — re-registering the same URL is a no-op
+ * on GitHub's side. Returns the registered delivery URL. Errors are wrapped with
+ * an actionable message; the secret is never included in the message.
+ */
+export async function registerWebhookUrl(
+  client: AppWebhookClientLike,
+  baseUrl: string,
+  secret: string,
+  path: string = WEBHOOK_PATH,
+): Promise<string> {
+  const url = webhookDeliveryUrl(baseUrl, path)
+  try {
+    await client.rest.apps.updateWebhookConfigForApp({ url, secret, content_type: 'json' })
+  }
+  catch (err) {
+    throw new Error(`failed to register webhook URL ${url} with the GitHub App: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  return url
+}
+
+export interface WebhookRuntime {
+  serverHandle: WebhookServerHandle
+  tunnelHandle: TunnelHandle
+  deliveryUrl: string
+}
+
+// Config + seams for assembling the webhook transport. The three start/register
+// seams default to the real implementations and are injected in tests so the
+// ordering + cleanup can be verified without a port, subprocess, or network.
+export interface WebhookWiringConfig {
+  appCfg: AppConfig
+  appClient: GitHubClientLike
+  repos: RepoRef[]
+  handle: string
+  selfLogin: string
+  dedup: Dedup
+  loadAccess: () => AccessState
+  emit: (msg: GitHubMessage) => void
+  port: number
+  tunnel: TunnelConfig
+}
+
+export interface WebhookWiringDeps {
+  startServer?: (ctx: WebhookContext, port: number) => WebhookServerHandle
+  startTunnel?: (cfg: TunnelConfig, deps?: TunnelDeps) => Promise<TunnelHandle>
+  registerWebhookUrl?: (client: AppWebhookClientLike, baseUrl: string, secret: string, path?: string) => Promise<string>
+  log?: (msg: string) => void
+}
+
+/**
+ * Assemble the webhook transport in order: bind the local receiver, bring up the
+ * Cloudflare tunnel, then register the public URL with the App. Ordering is
+ * deliberate — the receiver must be listening before GitHub is told where to
+ * deliver. If the tunnel or registration fails, the local server is stopped so a
+ * dangling listener is never leaked, and the error propagates so startup fails
+ * loudly.
+ */
+export async function startWebhookTransport(cfg: WebhookWiringConfig, deps: WebhookWiringDeps = {}): Promise<WebhookRuntime> {
+  const startServer = deps.startServer ?? startWebhookServer
+  const startTunnelFn = deps.startTunnel ?? startTunnel
+  const register = deps.registerWebhookUrl ?? registerWebhookUrl
+  const log = deps.log ?? ((): void => {})
+
+  const ctx: WebhookContext = {
+    secret: cfg.appCfg.webhookSecret,
+    watched: cfg.repos,
+    handle: cfg.handle,
+    selfLogin: cfg.selfLogin,
+    dedup: cfg.dedup,
+    loadAccess: cfg.loadAccess,
+    emit: cfg.emit,
+  }
+  const serverHandle = startServer(ctx, cfg.port)
+  log(`webhook receiver listening on :${serverHandle.port}${WEBHOOK_PATH}`)
+  try {
+    const tunnelHandle = await startTunnelFn(cfg.tunnel, {})
+    log(`tunnel up at ${tunnelHandle.url}`)
+    const deliveryUrl = await register(cfg.appClient as unknown as AppWebhookClientLike, tunnelHandle.url, cfg.appCfg.webhookSecret)
+    log(`registered webhook delivery URL ${deliveryUrl}`)
+    return { serverHandle, tunnelHandle, deliveryUrl }
+  }
+  catch (err) {
+    serverHandle.stop()
+    throw err
+  }
 }
 
 /**
@@ -714,27 +1235,59 @@ export function loadDotEnv(): void {
 async function runServer(): Promise<void> {
   loadDotEnv()
 
-  const token = process.env.CLAUDE_GITHUB_TOKEN
+  const transport = resolveTransport(process.env.CLAUDE_GITHUB_TRANSPORT)
+  if (process.env.CLAUDE_GITHUB_TRANSPORT && transport === 'poll' && process.env.CLAUDE_GITHUB_TRANSPORT.trim().toLowerCase() !== 'poll')
+    process.stderr.write(`github channel: unknown CLAUDE_GITHUB_TRANSPORT "${process.env.CLAUDE_GITHUB_TRANSPORT}" — falling back to poll\n`)
+
   const repos = parseRepos(process.env.CLAUDE_GITHUB_REPOS)
-  if (!token || repos.length === 0) {
-    process.stderr.write(
-      `github channel: CLAUDE_GITHUB_TOKEN and CLAUDE_GITHUB_REPOS required\n`
-      + `  set in ${ENV_FILE}\n`
-      + `  format:\n`
-      + `    CLAUDE_GITHUB_TOKEN=github_pat_...\n`
-      + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
-      + `  optional:\n`
-      + `    CLAUDE_GITHUB_POLL_INTERVAL_MS=${DEFAULT_POLL_INTERVAL_MS}        # base poll interval\n`
-      + `    CLAUDE_GITHUB_RATELIMIT_THRESHOLD=${DEFAULT_RATELIMIT_THRESHOLD}        # pause polling when core quota <= this\n`
-      + `    CLAUDE_GITHUB_RATELIMIT_POLL_EVERY=${DEFAULT_RATELIMIT_POLL_EVERY}       # probe GET /rate_limit every N ticks\n`,
-    )
-    process.exit(1)
+
+  // Resolve the GitHub client per transport: PAT (poll) or App installation
+  // (webhook). Both satisfy GitHubClientLike, so the tool cores are unchanged.
+  let client: GitHubClientLike
+  let appCfg: AppConfig | undefined
+  if (transport === 'webhook') {
+    try {
+      appCfg = loadAppConfig(process.env)
+    }
+    catch (err) {
+      process.stderr.write(
+        `github channel: ${err instanceof Error ? err.message : String(err)}\n`
+        + `  set GitHub App credentials in ${ENV_FILE}:\n`
+        + `    CLAUDE_GITHUB_APP_ID=...\n`
+        + `    CLAUDE_GITHUB_APP_PRIVATE_KEY=...      # PEM (single line with \\n escapes is ok)\n`
+        + `    CLAUDE_GITHUB_APP_INSTALLATION_ID=...\n`
+        + `    CLAUDE_GITHUB_WEBHOOK_SECRET=...\n`
+        + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
+        + `  optional: CLAUDE_GITHUB_TUNNEL_MODE=quick|named, CLAUDE_GITHUB_TUNNEL_NAME, CLAUDE_GITHUB_TUNNEL_HOSTNAME, CLAUDE_GITHUB_WEBHOOK_PORT=${DEFAULT_WEBHOOK_PORT}\n`,
+      )
+      process.exit(1)
+    }
+    if (repos.length === 0) {
+      process.stderr.write('github channel: CLAUDE_GITHUB_REPOS required (outbound + inbound repo gating)\n')
+      process.exit(1)
+    }
+    client = createAppClient(appCfg)
+  }
+  else {
+    const token = process.env.CLAUDE_GITHUB_TOKEN
+    if (!token || repos.length === 0) {
+      process.stderr.write(
+        `github channel: CLAUDE_GITHUB_TOKEN and CLAUDE_GITHUB_REPOS required\n`
+        + `  set in ${ENV_FILE}\n`
+        + `  format:\n`
+        + `    CLAUDE_GITHUB_TOKEN=github_pat_...\n`
+        + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
+        + `  optional:\n`
+        + `    CLAUDE_GITHUB_TRANSPORT=poll|webhook        # default poll\n`
+        + `    CLAUDE_GITHUB_POLL_INTERVAL_MS=${DEFAULT_POLL_INTERVAL_MS}        # base poll interval\n`
+        + `    CLAUDE_GITHUB_RATELIMIT_THRESHOLD=${DEFAULT_RATELIMIT_THRESHOLD}        # pause polling when core quota <= this\n`
+        + `    CLAUDE_GITHUB_RATELIMIT_POLL_EVERY=${DEFAULT_RATELIMIT_POLL_EVERY}       # probe GET /rate_limit every N ticks\n`,
+      )
+      process.exit(1)
+    }
+    client = new Octokit({ auth: token }) as unknown as GitHubClientLike
   }
 
-  const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
-  const rateLimitThreshold = resolveRateLimitThreshold(process.env.CLAUDE_GITHUB_RATELIMIT_THRESHOLD, DEFAULT_RATELIMIT_THRESHOLD)
-  const rateLimitPollEvery = resolvePollInterval(process.env.CLAUDE_GITHUB_RATELIMIT_POLL_EVERY, DEFAULT_RATELIMIT_POLL_EVERY)
-  const octokit = new Octokit({ auth: token }) as unknown as GitHubClientLike
   const ownComments = new Set<number>()
   const dedup = new Dedup()
   // Resolved after mcp.connect(); referenced by the tool handler closure.
@@ -752,33 +1305,39 @@ async function runServer(): Promise<void> {
 
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>
-    const deps: ToolDeps = { client: octokit, repos, ownComments, selfLogin }
+    const deps: ToolDeps = { client, repos, ownComments, selfLogin }
     const { text, isError } = await handleToolCall(req.params.name, args, deps)
     return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) }
   })
 
   await mcp.connect(new StdioServerTransport())
 
-  // Resolve the authenticated login for mention matching + self-filtering.
+  // Resolve the bot identity for mention matching + self-filtering. Poll mode
+  // uses the PAT user; webhook mode is the App's bot login (<app-slug>[bot]).
   try {
-    const me = await (octokit as unknown as Octokit).rest.users.getAuthenticated()
-    selfLogin = me.data.login
+    if (transport === 'webhook') {
+      const app = await (client as unknown as Octokit).rest.apps.getAuthenticated()
+      selfLogin = `${app.data?.slug}[bot]`
+    }
+    else {
+      const me = await (client as unknown as Octokit).rest.users.getAuthenticated()
+      selfLogin = me.data.login
+    }
     process.stderr.write(`github channel: connected as ${selfLogin}\n`)
   }
   catch (err) {
-    process.stderr.write(`github channel: getAuthenticated failed: ${err}\n`)
+    process.stderr.write(`github channel: identity lookup failed: ${err}\n`)
   }
 
-  // Refuse to poll without a resolved identity: an empty selfLogin disables the
+  // Refuse to run without a resolved identity: an empty selfLogin disables the
   // self-comment filter (login === selfLogin never matches), which can loop the
-  // bot replying to its own @mentions and exhaust the PAT rate budget.
-  if (!selfLogin) {
-    process.stderr.write('github channel: could not resolve authenticated identity — refusing to poll (self-loop risk)\n')
+  // bot replying to its own @mentions and exhaust the rate budget.
+  if (!selfLogin || selfLogin === 'undefined[bot]') {
+    process.stderr.write('github channel: could not resolve authenticated identity — refusing to start (self-loop risk)\n')
     process.exit(1)
   }
 
   const handle = resolveHandle(process.env.CLAUDE_GITHUB_MENTION, selfLogin)
-  const cursor = seedCursor(loadCursor(), repos, new Date().toISOString())
 
   const emit = (msg: GitHubMessage): void => {
     mcp
@@ -790,6 +1349,37 @@ async function runServer(): Promise<void> {
         process.stderr.write(`github channel: failed to deliver comment ${msg.commentId}: ${err}\n`)
       })
   }
+
+  // Webhook transport: bring up the receiver + tunnel + registration, then idle
+  // (deliveries are push-driven; there is no poll loop).
+  if (transport === 'webhook') {
+    const port = resolvePollInterval(process.env.CLAUDE_GITHUB_WEBHOOK_PORT, DEFAULT_WEBHOOK_PORT)
+    const tunnel: TunnelConfig = {
+      mode: process.env.CLAUDE_GITHUB_TUNNEL_MODE === 'named' ? 'named' : 'quick',
+      localPort: port,
+      name: process.env.CLAUDE_GITHUB_TUNNEL_NAME,
+      hostname: process.env.CLAUDE_GITHUB_TUNNEL_HOSTNAME,
+    }
+    try {
+      await startWebhookTransport(
+        { appCfg: appCfg as AppConfig, appClient: client, repos, handle, selfLogin, dedup, loadAccess: () => loadAccess(), emit, port, tunnel },
+        { log: msg => process.stderr.write(`github channel: ${msg}\n`) },
+      )
+    }
+    catch (err) {
+      process.stderr.write(`github channel: webhook transport failed to start: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+    process.stderr.write(`github channel: webhook mode watching ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} (mention @${handle})\n`)
+    return
+  }
+
+  // Poll transport (default).
+  const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
+  const rateLimitThreshold = resolveRateLimitThreshold(process.env.CLAUDE_GITHUB_RATELIMIT_THRESHOLD, DEFAULT_RATELIMIT_THRESHOLD)
+  const rateLimitPollEvery = resolvePollInterval(process.env.CLAUDE_GITHUB_RATELIMIT_POLL_EVERY, DEFAULT_RATELIMIT_POLL_EVERY)
+  const octokit = client
+  const cursor = seedCursor(loadCursor(), repos, new Date().toISOString())
 
   let failures = 0
   let tickCount = 0

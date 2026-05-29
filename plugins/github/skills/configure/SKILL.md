@@ -72,6 +72,40 @@ When the user asks how to create the token:
 > A classic `ghp_...` token with `repo` scope also works but is broader than
 > necessary; prefer fine-grained.
 
+## Webhook mode (GitHub App + Cloudflare tunnel)
+
+The channel has two inbound transports, selected by `CLAUDE_GITHUB_TRANSPORT`
+(default `poll`). The PAT flow above is poll mode. **Webhook mode** uses a GitHub
+App + a Cloudflare tunnel for real-time delivery; the user creates the App
+manually and supplies its credentials. When the user wants webhook mode, write
+these keys to `~/.claude/channels/github/.env` (then `chmod 600`):
+
+```
+CLAUDE_GITHUB_TRANSPORT=webhook
+CLAUDE_GITHUB_APP_ID=<app id>
+CLAUDE_GITHUB_APP_PRIVATE_KEY=<PEM; single line with \n escapes is fine>
+CLAUDE_GITHUB_APP_INSTALLATION_ID=<installation id>
+CLAUDE_GITHUB_WEBHOOK_SECRET=<random string>
+CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2
+```
+
+Optional tunnel keys:
+
+- `CLAUDE_GITHUB_TUNNEL_MODE=quick|named` (default `quick`)
+- `CLAUDE_GITHUB_TUNNEL_NAME`, `CLAUDE_GITHUB_TUNNEL_HOSTNAME` (named mode only)
+- `CLAUDE_GITHUB_WEBHOOK_PORT=8765` (local receiver port)
+- `CLAUDE_GITHUB_MENTION=<handle>` (defaults to `<app-slug>[bot]`)
+
+GitHub App requirements: **Issues** + **Pull requests** read & write on the
+watched repos, a **webhook secret**, and a subscription to the **Issue comment**
+event. `cloudflared` must be installed on the host. The channel registers the
+tunnel URL as the App's webhook automatically at startup. Never echo the private
+key or webhook secret back to the user (mask like the token).
+
+When showing no-args status, also report `CLAUDE_GITHUB_TRANSPORT` and, in
+webhook mode, whether the App credentials (app id / private key / installation id
+/ webhook secret) are present (masked).
+
 ## Implementation notes
 
 - The server reads `.env` once at boot — token/repo changes need a session
