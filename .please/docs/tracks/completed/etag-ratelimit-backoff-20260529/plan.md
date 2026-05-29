@@ -201,3 +201,30 @@ lint-clean. Implemented on `feat/etag-ratelimit-backoff-20260529`.
   change to persist (only the type + write sites matter).
 - `@octokit/rest` signals 304 by **throwing** `RequestError(304)`, so the 304 path
   is a catch branch, not a normal return — tests must throw from the mock.
+
+## Outcomes & Retrospective
+
+### What Was Shipped
+ETag conditional requests (`RepoCursor.etag`, `If-None-Match`, 304→no-new-items)
+and rate-limit-aware backoff (proactive `GET /rate_limit` pause + `Retry-After`)
+for the GitHub poll loop. Manual `@octokit/rest` approach, zero new deps. PR #12.
+
+### What Went Well
+- A runnable PoC (`poc/etag-make-fetch-happen/`) settled the make-fetch-happen vs
+  manual-hook decision with evidence rather than speculation — and caught that
+  make-fetch-happen hides `x-ratelimit-*` on 304s, which reshaped requirement (b).
+- The existing `GitHubClientLike` mock seam made every path unit-testable without
+  network (64 tests, incl. a 200→304→200 regression).
+- `loadCursor`'s pass-through meant etag persistence needed no loader change.
+
+### What Could Improve
+- The `tick()` runtime loop isn't directly harnessed; backoff/pause correctness
+  rests on the pure helpers + their tests. A small `tick`-level test harness would
+  close the last wiring gap (review minor #3).
+- `bun test` was blocked by a deliberate deny rule; surfaced only at implementation
+  time. Worth documenting in workflow.md which commands the TDD loop needs.
+
+### Tech Debt Created
+- None in the plugin. Pre-existing (not from this track): repo-wide markdown
+  prettier lint debt; an unrelated slack source-grep test failure; github plugin
+  has no `turbo check` task so it isn't typechecked by the pipeline.
