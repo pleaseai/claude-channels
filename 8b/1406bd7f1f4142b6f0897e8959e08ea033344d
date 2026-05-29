@@ -1,0 +1,24 @@
+.please/docs/tracks/active/etag-ratelimit-backoff-20260529/plan.md
+  s_69f6dc35affa23::t_27344734605b1f 88
+plugins/github/server.ts
+  s_69f6dc35affa23::t_757ea576e8db32 126,131-135
+plugins/github/server.test.ts
+  s_69f6dc35affa23::t_a72c77440e6ee3 73-79,88-95
+  s_69f6dc35affa23::t_fb81afab91c2fa 54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8b1406bd7f1f4142b6f0897e8959e08ea033344d",
+  "prompts": {},
+  "sessions": {
+    "s_69f6dc35affa23": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef6575f2-7624-4594-93c7-36c1bf1fe6b7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
