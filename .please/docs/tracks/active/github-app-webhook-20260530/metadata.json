@@ -1,11 +1,13 @@
 {
   "track_id": "github-app-webhook-20260530",
   "type": "feature",
-  "status": "planned",
+  "status": "in_progress",
   "created_at": "2026-05-29T18:38:03Z",
-  "updated_at": "2026-05-29T18:55:00Z",
+  "updated_at": "2026-05-29T19:05:00Z",
   "issue": "#13",
-  "pr": "",
+  "pr": "https://github.com/pleaseai/claude-channels/pull/14",
+  "code_pr": "https://github.com/pleaseai/claude-channels/pull/14",
   "project": "",
-  "project_item_id": ""
+  "project_item_id": "",
+  "code_branch": "feat/github-app-webhook-20260530"
 }
