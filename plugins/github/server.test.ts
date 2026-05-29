@@ -32,6 +32,7 @@ const {
   retryAfterDelay,
   rateLimitPauseMs,
   checkRateLimitPause,
+  nextBackoffDelay,
   resolveHandle,
   seedCursor,
   rememberPostedIds,
@@ -261,6 +262,18 @@ describe('proactive rate-limit pause', () => {
   it('checkRateLimitPause fails open (0) when rate_limit errors', async () => {
     const { client } = mockClient({ rateLimitThrow: new Error('rate_limit down') })
     expect(await checkRateLimitPause(client, 50, 0)).toBe(0)
+  })
+})
+
+describe('Retry-After backoff', () => {
+  it('uses plain exponential backoff when no Retry-After is present', () => {
+    expect(nextBackoffDelay(1000, 1)).toBe(2000)
+  })
+  it('honors Retry-After when it exceeds the exponential backoff', () => {
+    expect(nextBackoffDelay(1000, 1, 30000)).toBe(30000)
+  })
+  it('keeps the larger of exponential backoff and Retry-After', () => {
+    expect(nextBackoffDelay(1000, 5, 1000)).toBe(12000) // capped exp (12x) wins over 1s retry-after
   })
 })
 

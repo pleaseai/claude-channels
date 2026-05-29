@@ -269,6 +269,16 @@ export function backoffDelay(base: number, failures: number): number {
 }
 
 /**
+ * Next poll delay after a failure: the larger of the exponential backoff and any
+ * server-provided `Retry-After` (so we never retry sooner than GitHub asks on a
+ * 429 / secondary-rate-limit response).
+ */
+export function nextBackoffDelay(base: number, failures: number, retryAfterMs?: number): number {
+  const exp = backoffDelay(base, failures)
+  return retryAfterMs !== undefined ? Math.max(exp, retryAfterMs) : exp
+}
+
+/**
  * Resolve the proactive-pause quota threshold from an env string. Unlike the
  * poll interval, 0 is valid (= only pause once quota is fully exhausted), so
  * negative / non-numeric values fall back to the default.
@@ -807,8 +817,10 @@ async function runServer(): Promise<void> {
     }
     catch (err) {
       failures++
-      delay = backoffDelay(pollInterval, failures)
-      process.stderr.write(`github channel: poll failed (${failures}): ${err}\n`)
+      const retryAfterMs = retryAfterDelay(err)
+      delay = nextBackoffDelay(pollInterval, failures, retryAfterMs)
+      const suffix = retryAfterMs !== undefined ? ` (Retry-After ~${Math.round(retryAfterMs / 1000)}s)` : ''
+      process.stderr.write(`github channel: poll failed (${failures})${suffix}: ${err}\n`)
     }
     setTimeout(() => {
       void tick()
