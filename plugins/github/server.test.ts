@@ -50,6 +50,7 @@ const {
   startTunnel,
   webhookDeliveryUrl,
   registerWebhookUrl,
+  startWebhookTransport,
   seedCursor,
   rememberPostedIds,
   Dedup,
@@ -618,6 +619,72 @@ describe('registerWebhookUrl', () => {
   })
 })
 
+describe('startWebhookTransport', () => {
+  function wiring(): any {
+    return {
+      appCfg: { appId: '1', privateKey: 'k', installationId: 2, webhookSecret: 'sec' },
+      appClient: {},
+      repos: WATCHED,
+      handle: 'bot',
+      selfLogin: 'bot[bot]',
+      dedup: new Dedup(),
+      loadAccess: () => ({ mode: 'open' as const, allowedLogins: [], configured: true }),
+      emit: () => {},
+      port: 8765,
+      tunnel: { mode: 'quick' as const, localPort: 8765 },
+    }
+  }
+
+  function trackedServer(onStop: () => void): () => { port: number, stop: () => void } {
+    return () => ({
+      port: 8765,
+      stop: onStop,
+    })
+  }
+
+  it('binds the receiver, brings up the tunnel, then registers — in that order', async () => {
+    const order: string[] = []
+    const runtime = await startWebhookTransport(wiring(), {
+      startServer: () => {
+        order.push('server')
+        return { port: 8765, stop: () => {} }
+      },
+      startTunnel: async () => {
+        order.push('tunnel')
+        return { url: 'https://x.trycloudflare.com', stop: () => {} }
+      },
+      registerWebhookUrl: async (_c, base) => {
+        order.push('register')
+        return `${base}/webhook`
+      },
+    })
+    expect(order).toEqual(['server', 'tunnel', 'register'])
+    expect(runtime.deliveryUrl).toBe('https://x.trycloudflare.com/webhook')
+  })
+
+  it('stops the local server and rethrows if the tunnel fails to start', async () => {
+    let stopped = false
+    const promise = startWebhookTransport(wiring(), {
+      startServer: trackedServer(() => { stopped = true }),
+      startTunnel: async () => { throw new Error('cloudflared missing') },
+      registerWebhookUrl: async (_c, base) => `${base}/webhook`,
+    })
+    await expect(promise).rejects.toThrow(/cloudflared missing/)
+    expect(stopped).toBe(true)
+  })
+
+  it('stops the local server if registration fails', async () => {
+    let stopped = false
+    const promise = startWebhookTransport(wiring(), {
+      startServer: trackedServer(() => { stopped = true }),
+      startTunnel: async () => ({ url: 'https://x.trycloudflare.com', stop: () => {} }),
+      registerWebhookUrl: async () => { throw new Error('403') },
+    })
+    await expect(promise).rejects.toThrow(/403/)
+    expect(stopped).toBe(true)
+  })
+})
+
 describe('rate-limit helpers', () => {
   it('resolves the threshold from env, allowing 0 and falling back', () => {
     expect(resolveRateLimitThreshold('100', 50)).toBe(100)
@@ -1057,6 +1124,40 @@ describe('github channel server (mcp stdio)', () => {
     }
     finally {
       client.kill()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails fast in webhook mode when App credentials are missing', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'gh-channel-itest-'))
+    // Spawn with an isolated HOME so no real ~/.claude/channels/github/.env leaks in.
+    const proc = spawn('bun', [SERVER_PATH], {
+      env: {
+        ...process.env,
+        HOME: stateDir,
+        CLAUDE_GITHUB_STATE_DIR: stateDir,
+        CLAUDE_GITHUB_TRANSPORT: 'webhook',
+        CLAUDE_GITHUB_REPOS: 'acme/app',
+        CLAUDE_GITHUB_TOKEN: '',
+        CLAUDE_GITHUB_APP_ID: '',
+        CLAUDE_GITHUB_APP_PRIVATE_KEY: '',
+        CLAUDE_GITHUB_APP_INSTALLATION_ID: '',
+        CLAUDE_GITHUB_WEBHOOK_SECRET: '',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    try {
+      let stderr = ''
+      proc.stderr.on('data', (c: Buffer) => {
+        stderr += c.toString()
+      })
+      const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? -1)))
+      expect(code).not.toBe(0)
+      expect(stderr).toMatch(/webhook transport requires/)
+      expect(stderr).toMatch(/CLAUDE_GITHUB_APP_ID/)
+    }
+    finally {
+      proc.kill()
       rmSync(stateDir, { recursive: true, force: true })
     }
   })

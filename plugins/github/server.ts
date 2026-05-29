@@ -67,6 +67,8 @@ const MAX_BACKOFF_MULTIPLIER = 12
 const DEFAULT_RATELIMIT_THRESHOLD = 50
 const DEFAULT_RATELIMIT_POLL_EVERY = 10
 const MAX_COMMENT_LENGTH = 65536
+// Local port the webhook receiver binds (cloudflared forwards to it).
+const DEFAULT_WEBHOOK_PORT = 8765
 const RECENT_INBOUND_CAP = 500
 const MAX_FETCH_LIMIT = 100
 const VALID_REACTIONS: ReadonlySet<string> = new Set([
@@ -756,6 +758,73 @@ export async function registerWebhookUrl(
   return url
 }
 
+export interface WebhookRuntime {
+  serverHandle: WebhookServerHandle
+  tunnelHandle: TunnelHandle
+  deliveryUrl: string
+}
+
+// Config + seams for assembling the webhook transport. The three start/register
+// seams default to the real implementations and are injected in tests so the
+// ordering + cleanup can be verified without a port, subprocess, or network.
+export interface WebhookWiringConfig {
+  appCfg: AppConfig
+  appClient: GitHubClientLike
+  repos: RepoRef[]
+  handle: string
+  selfLogin: string
+  dedup: Dedup
+  loadAccess: () => AccessState
+  emit: (msg: GitHubMessage) => void
+  port: number
+  tunnel: TunnelConfig
+}
+
+export interface WebhookWiringDeps {
+  startServer?: (ctx: WebhookContext, port: number) => WebhookServerHandle
+  startTunnel?: (cfg: TunnelConfig, deps?: TunnelDeps) => Promise<TunnelHandle>
+  registerWebhookUrl?: (client: AppWebhookClientLike, baseUrl: string, secret: string, path?: string) => Promise<string>
+  log?: (msg: string) => void
+}
+
+/**
+ * Assemble the webhook transport in order: bind the local receiver, bring up the
+ * Cloudflare tunnel, then register the public URL with the App. Ordering is
+ * deliberate — the receiver must be listening before GitHub is told where to
+ * deliver. If the tunnel or registration fails, the local server is stopped so a
+ * dangling listener is never leaked, and the error propagates so startup fails
+ * loudly.
+ */
+export async function startWebhookTransport(cfg: WebhookWiringConfig, deps: WebhookWiringDeps = {}): Promise<WebhookRuntime> {
+  const startServer = deps.startServer ?? startWebhookServer
+  const startTunnelFn = deps.startTunnel ?? startTunnel
+  const register = deps.registerWebhookUrl ?? registerWebhookUrl
+  const log = deps.log ?? ((): void => {})
+
+  const ctx: WebhookContext = {
+    secret: cfg.appCfg.webhookSecret,
+    watched: cfg.repos,
+    handle: cfg.handle,
+    selfLogin: cfg.selfLogin,
+    dedup: cfg.dedup,
+    loadAccess: cfg.loadAccess,
+    emit: cfg.emit,
+  }
+  const serverHandle = startServer(ctx, cfg.port)
+  log(`webhook receiver listening on :${serverHandle.port}${WEBHOOK_PATH}`)
+  try {
+    const tunnelHandle = await startTunnelFn(cfg.tunnel, {})
+    log(`tunnel up at ${tunnelHandle.url}`)
+    const deliveryUrl = await register(cfg.appClient as unknown as AppWebhookClientLike, tunnelHandle.url, cfg.appCfg.webhookSecret)
+    log(`registered webhook delivery URL ${deliveryUrl}`)
+    return { serverHandle, tunnelHandle, deliveryUrl }
+  }
+  catch (err) {
+    serverHandle.stop()
+    throw err
+  }
+}
+
 /**
  * Seed any unseen repo's cursor at `startIso` so a fresh start only delivers
  * comments created after boot (no historical replay). Mutates and returns.
@@ -1130,27 +1199,59 @@ export function loadDotEnv(): void {
 async function runServer(): Promise<void> {
   loadDotEnv()
 
-  const token = process.env.CLAUDE_GITHUB_TOKEN
+  const transport = resolveTransport(process.env.CLAUDE_GITHUB_TRANSPORT)
+  if (process.env.CLAUDE_GITHUB_TRANSPORT && transport === 'poll' && process.env.CLAUDE_GITHUB_TRANSPORT.trim().toLowerCase() !== 'poll')
+    process.stderr.write(`github channel: unknown CLAUDE_GITHUB_TRANSPORT "${process.env.CLAUDE_GITHUB_TRANSPORT}" — falling back to poll\n`)
+
   const repos = parseRepos(process.env.CLAUDE_GITHUB_REPOS)
-  if (!token || repos.length === 0) {
-    process.stderr.write(
-      `github channel: CLAUDE_GITHUB_TOKEN and CLAUDE_GITHUB_REPOS required\n`
-      + `  set in ${ENV_FILE}\n`
-      + `  format:\n`
-      + `    CLAUDE_GITHUB_TOKEN=github_pat_...\n`
-      + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
-      + `  optional:\n`
-      + `    CLAUDE_GITHUB_POLL_INTERVAL_MS=${DEFAULT_POLL_INTERVAL_MS}        # base poll interval\n`
-      + `    CLAUDE_GITHUB_RATELIMIT_THRESHOLD=${DEFAULT_RATELIMIT_THRESHOLD}        # pause polling when core quota <= this\n`
-      + `    CLAUDE_GITHUB_RATELIMIT_POLL_EVERY=${DEFAULT_RATELIMIT_POLL_EVERY}       # probe GET /rate_limit every N ticks\n`,
-    )
-    process.exit(1)
+
+  // Resolve the GitHub client per transport: PAT (poll) or App installation
+  // (webhook). Both satisfy GitHubClientLike, so the tool cores are unchanged.
+  let client: GitHubClientLike
+  let appCfg: AppConfig | undefined
+  if (transport === 'webhook') {
+    try {
+      appCfg = loadAppConfig(process.env)
+    }
+    catch (err) {
+      process.stderr.write(
+        `github channel: ${err instanceof Error ? err.message : String(err)}\n`
+        + `  set GitHub App credentials in ${ENV_FILE}:\n`
+        + `    CLAUDE_GITHUB_APP_ID=...\n`
+        + `    CLAUDE_GITHUB_APP_PRIVATE_KEY=...      # PEM (single line with \\n escapes is ok)\n`
+        + `    CLAUDE_GITHUB_APP_INSTALLATION_ID=...\n`
+        + `    CLAUDE_GITHUB_WEBHOOK_SECRET=...\n`
+        + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
+        + `  optional: CLAUDE_GITHUB_TUNNEL_MODE=quick|named, CLAUDE_GITHUB_TUNNEL_NAME, CLAUDE_GITHUB_TUNNEL_HOSTNAME, CLAUDE_GITHUB_WEBHOOK_PORT=${DEFAULT_WEBHOOK_PORT}\n`,
+      )
+      process.exit(1)
+    }
+    if (repos.length === 0) {
+      process.stderr.write('github channel: CLAUDE_GITHUB_REPOS required (outbound + inbound repo gating)\n')
+      process.exit(1)
+    }
+    client = createAppClient(appCfg)
+  }
+  else {
+    const token = process.env.CLAUDE_GITHUB_TOKEN
+    if (!token || repos.length === 0) {
+      process.stderr.write(
+        `github channel: CLAUDE_GITHUB_TOKEN and CLAUDE_GITHUB_REPOS required\n`
+        + `  set in ${ENV_FILE}\n`
+        + `  format:\n`
+        + `    CLAUDE_GITHUB_TOKEN=github_pat_...\n`
+        + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
+        + `  optional:\n`
+        + `    CLAUDE_GITHUB_TRANSPORT=poll|webhook        # default poll\n`
+        + `    CLAUDE_GITHUB_POLL_INTERVAL_MS=${DEFAULT_POLL_INTERVAL_MS}        # base poll interval\n`
+        + `    CLAUDE_GITHUB_RATELIMIT_THRESHOLD=${DEFAULT_RATELIMIT_THRESHOLD}        # pause polling when core quota <= this\n`
+        + `    CLAUDE_GITHUB_RATELIMIT_POLL_EVERY=${DEFAULT_RATELIMIT_POLL_EVERY}       # probe GET /rate_limit every N ticks\n`,
+      )
+      process.exit(1)
+    }
+    client = new Octokit({ auth: token }) as unknown as GitHubClientLike
   }
 
-  const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
-  const rateLimitThreshold = resolveRateLimitThreshold(process.env.CLAUDE_GITHUB_RATELIMIT_THRESHOLD, DEFAULT_RATELIMIT_THRESHOLD)
-  const rateLimitPollEvery = resolvePollInterval(process.env.CLAUDE_GITHUB_RATELIMIT_POLL_EVERY, DEFAULT_RATELIMIT_POLL_EVERY)
-  const octokit = new Octokit({ auth: token }) as unknown as GitHubClientLike
   const ownComments = new Set<number>()
   const dedup = new Dedup()
   // Resolved after mcp.connect(); referenced by the tool handler closure.
@@ -1168,33 +1269,39 @@ async function runServer(): Promise<void> {
 
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>
-    const deps: ToolDeps = { client: octokit, repos, ownComments, selfLogin }
+    const deps: ToolDeps = { client, repos, ownComments, selfLogin }
     const { text, isError } = await handleToolCall(req.params.name, args, deps)
     return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) }
   })
 
   await mcp.connect(new StdioServerTransport())
 
-  // Resolve the authenticated login for mention matching + self-filtering.
+  // Resolve the bot identity for mention matching + self-filtering. Poll mode
+  // uses the PAT user; webhook mode is the App's bot login (<app-slug>[bot]).
   try {
-    const me = await (octokit as unknown as Octokit).rest.users.getAuthenticated()
-    selfLogin = me.data.login
+    if (transport === 'webhook') {
+      const app = await (client as unknown as Octokit).rest.apps.getAuthenticated()
+      selfLogin = `${app.data?.slug}[bot]`
+    }
+    else {
+      const me = await (client as unknown as Octokit).rest.users.getAuthenticated()
+      selfLogin = me.data.login
+    }
     process.stderr.write(`github channel: connected as ${selfLogin}\n`)
   }
   catch (err) {
-    process.stderr.write(`github channel: getAuthenticated failed: ${err}\n`)
+    process.stderr.write(`github channel: identity lookup failed: ${err}\n`)
   }
 
-  // Refuse to poll without a resolved identity: an empty selfLogin disables the
+  // Refuse to run without a resolved identity: an empty selfLogin disables the
   // self-comment filter (login === selfLogin never matches), which can loop the
-  // bot replying to its own @mentions and exhaust the PAT rate budget.
-  if (!selfLogin) {
-    process.stderr.write('github channel: could not resolve authenticated identity — refusing to poll (self-loop risk)\n')
+  // bot replying to its own @mentions and exhaust the rate budget.
+  if (!selfLogin || selfLogin === 'undefined[bot]') {
+    process.stderr.write('github channel: could not resolve authenticated identity — refusing to start (self-loop risk)\n')
     process.exit(1)
   }
 
   const handle = resolveHandle(process.env.CLAUDE_GITHUB_MENTION, selfLogin)
-  const cursor = seedCursor(loadCursor(), repos, new Date().toISOString())
 
   const emit = (msg: GitHubMessage): void => {
     mcp
@@ -1206,6 +1313,37 @@ async function runServer(): Promise<void> {
         process.stderr.write(`github channel: failed to deliver comment ${msg.commentId}: ${err}\n`)
       })
   }
+
+  // Webhook transport: bring up the receiver + tunnel + registration, then idle
+  // (deliveries are push-driven; there is no poll loop).
+  if (transport === 'webhook') {
+    const port = resolvePollInterval(process.env.CLAUDE_GITHUB_WEBHOOK_PORT, DEFAULT_WEBHOOK_PORT)
+    const tunnel: TunnelConfig = {
+      mode: process.env.CLAUDE_GITHUB_TUNNEL_MODE === 'named' ? 'named' : 'quick',
+      localPort: port,
+      name: process.env.CLAUDE_GITHUB_TUNNEL_NAME,
+      hostname: process.env.CLAUDE_GITHUB_TUNNEL_HOSTNAME,
+    }
+    try {
+      await startWebhookTransport(
+        { appCfg: appCfg as AppConfig, appClient: client, repos, handle, selfLogin, dedup, loadAccess: () => loadAccess(), emit, port, tunnel },
+        { log: msg => process.stderr.write(`github channel: ${msg}\n`) },
+      )
+    }
+    catch (err) {
+      process.stderr.write(`github channel: webhook transport failed to start: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+    process.stderr.write(`github channel: webhook mode watching ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} (mention @${handle})\n`)
+    return
+  }
+
+  // Poll transport (default).
+  const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
+  const rateLimitThreshold = resolveRateLimitThreshold(process.env.CLAUDE_GITHUB_RATELIMIT_THRESHOLD, DEFAULT_RATELIMIT_THRESHOLD)
+  const rateLimitPollEvery = resolvePollInterval(process.env.CLAUDE_GITHUB_RATELIMIT_POLL_EVERY, DEFAULT_RATELIMIT_POLL_EVERY)
+  const octokit = client
+  const cursor = seedCursor(loadCursor(), repos, new Date().toISOString())
 
   let failures = 0
   let tickCount = 0

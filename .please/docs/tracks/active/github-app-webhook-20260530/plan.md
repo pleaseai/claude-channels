@@ -61,9 +61,9 @@ CLAUDE_GITHUB_TRANSPORT │  PAT Octokit → tick()/pollRepo → [mention→gati
 - [x] T008 [P] Add `parseTunnelUrl(line)` — extract `https://*.trycloudflare.com` (and named hostname) from cloudflared output (file: plugins/github/server.ts)
 - [x] T009 Add cloudflared subprocess lifecycle: spawn quick + named modes, detect ready URL, monitor, clean shutdown (file: plugins/github/server.ts) (depends on T008)
 - [x] T010 Add webhook-URL auto-registration via App Octokit on startup (file: plugins/github/server.ts) (depends on T004, T009)
-- [ ] T011 Wire webhook transport branch into `runServer` (poll remains default; assemble App client + receiver + tunnel + registration) (file: plugins/github/server.ts) (depends on T002, T004, T007, T009, T010)
-- [ ] T012 [P] Update tech-stack.md GitHub row to note webhook/App transport (file: .please/docs/knowledge/tech-stack.md)
-- [ ] T013 [P] Document webhook setup: App creation, credentials, transport env, cloudflared prereq (files: plugins/github/README.md, plugins/github/README.ko.md, plugins/github/skills/configure/SKILL.md)
+- [x] T011 Wire webhook transport branch into `runServer` (poll remains default; assemble App client + receiver + tunnel + registration) (file: plugins/github/server.ts) (depends on T002, T004, T007, T009, T010)
+- [x] T012 [P] Update tech-stack.md GitHub row to note webhook/App transport (file: .please/docs/knowledge/tech-stack.md)
+- [x] T013 [P] Document webhook setup: App creation, credentials, transport env, cloudflared prereq (files: plugins/github/README.md, plugins/github/README.ko.md, plugins/github/skills/configure/SKILL.md)
 
 ## Dependencies
 
@@ -174,4 +174,23 @@ _(updated by /please:implement)_
 
 ## Surprises & Discoveries
 
-_(updated by /please:implement)_
+- **`@octokit/auth-app` is route-aware**: a single installation-authed Octokit
+  signs `/app/*` routes (webhook registration) with the App JWT and repo routes
+  with the installation token — so one client serves both outbound tools and
+  `registerWebhookUrl`. No separate JWT client needed.
+- **Coverage**: 94% functions / ~76% lines for `server.ts`. All new *domain*
+  logic (transport selector, App config, signature verify, event→message map,
+  receiver handler, tunnel parse/lifecycle, registration, `startWebhookTransport`
+  orchestration) is unit-tested. The line-coverage dip vs the prior 80.7% is the
+  enlarged `runServer` bootstrap (poll loop + webhook assembly), an impure shell
+  that is integration-level by nature; it is covered partially by the MCP-stdio
+  spawn tests (poll init + webhook fail-fast on missing creds). Not gamed.
+- **Pre-existing unrelated failure**: `plugins/slack/server.test.ts`
+  ("requires CLAUDE_SLACK_CHANNEL_ID") fails in this environment independent of
+  this track (reproduces with these changes stashed). Left untouched (out of
+  scope); flagged for separate triage.
+- **Stray file mode**: `plugins/slack/server.ts` picked up an executable bit
+  (100644→100755) during the run (tooling side effect); reverted.
+- **Named-tunnel readiness** is detected from cloudflared's
+  "Registered tunnel connection" log line (no URL is printed); the public URL is
+  the configured hostname. Quick tunnels parse the `*.trycloudflare.com` URL.
