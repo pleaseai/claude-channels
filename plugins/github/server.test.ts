@@ -280,6 +280,10 @@ describe('reactCore', () => {
     expect(await reactCore(client, WATCHED, { chat_id: 'acme/app#5', comment_id: 1, reaction: 'eyes' })).toBe('reacted')
     expect((calls.react[0] as { content: string }).content).toBe('eyes')
   })
+  it('rejects un-watched repos', async () => {
+    const { client } = mockClient()
+    await expect(reactCore(client, WATCHED, { chat_id: 'other/repo#1', comment_id: 1, reaction: 'eyes' })).rejects.toThrow(/un-watched/)
+  })
 })
 
 describe('editCore', () => {
@@ -291,6 +295,10 @@ describe('editCore', () => {
     const { client } = mockClient()
     const out = await editCore(client, WATCHED, new Set([9]), { chat_id: 'acme/app#5', comment_id: 9, body: 'x' })
     expect(out).toContain('edited')
+  })
+  it('rejects un-watched repos before checking ownership', async () => {
+    const { client } = mockClient()
+    await expect(editCore(client, WATCHED, new Set([9]), { chat_id: 'other/repo#9', comment_id: 9, body: 'x' })).rejects.toThrow(/un-watched/)
   })
 })
 
@@ -309,6 +317,10 @@ describe('fetchCore', () => {
   it('reports empty threads', async () => {
     const { client } = mockClient({ listComments: [] })
     expect(await fetchCore(client, WATCHED, 'mybot', { chat_id: 'acme/app#5' })).toBe('(no messages)')
+  })
+  it('rejects un-watched repos', async () => {
+    const { client } = mockClient()
+    await expect(fetchCore(client, WATCHED, 'mybot', { chat_id: 'other/repo#1' })).rejects.toThrow(/un-watched/)
   })
 })
 
@@ -337,6 +349,23 @@ describe('pollRepo', () => {
     const got2: GitHubMessage[] = []
     await pollRepo(client, { owner: 'acme', repo: 'app' }, cursor, { handle: 'mybot', selfLogin: 'mybot', dedup, access }, m => got2.push(m))
     expect(got2).toEqual([])
+  })
+
+  it('skips comments with no author and self-authored comments', async () => {
+    const data = [
+      { id: 10, body: '@mybot hi', html_url: 'h', created_at: 't', user: null, issue_url: 'https://api.github.com/repos/acme/app/issues/5' },
+      { id: 11, body: '@mybot hi', html_url: 'h', created_at: 't', user: { login: 'mybot', id: 2 }, issue_url: 'https://api.github.com/repos/acme/app/issues/5' },
+    ]
+    const { client } = mockClient({ listCommentsForRepo: data })
+    const got: GitHubMessage[] = []
+    await pollRepo(
+      client,
+      { owner: 'acme', repo: 'app' },
+      {},
+      { handle: 'mybot', selfLogin: 'mybot', dedup: new Dedup(), access: { mode: 'open', allowedLogins: [], configured: true } },
+      m => got.push(m),
+    )
+    expect(got).toEqual([]) // null-author skipped, self-authored skipped
   })
 })
 

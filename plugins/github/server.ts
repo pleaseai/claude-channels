@@ -76,7 +76,9 @@ export interface AccessState {
   configured: boolean
 }
 
-export type CommentType = 'issue' | 'pr' | 'pr_review'
+// PR *review* (diff-line) comments are out of scope for this track; the poll
+// loop covers issue + PR conversation comments only.
+export type CommentType = 'issue' | 'pr'
 
 export interface GitHubMessage {
   repo: string
@@ -91,8 +93,9 @@ export interface GitHubMessage {
 }
 
 interface RepoCursor {
+  // `since` is the only cursor field used today. Conditional requests
+  // (ETag/If-None-Match) are deferred — see plan Decision Log.
   since?: string
-  etag?: string
 }
 
 export interface PollCursor {
@@ -297,6 +300,17 @@ function defaultAccess(): AccessState {
   return { mode: 'allowlist', allowedLogins: [], configured: false }
 }
 
+/**
+ * Warn on stderr when a state file fault is anything other than "not found".
+ * A missing file is the expected first-run case; corruption (bad JSON, partial
+ * write, disk error) must be surfaced — otherwise it is indistinguishable from
+ * first run and the silent default takes over. Mirrors loadDotEnv's handling.
+ */
+function warnIfNotMissing(err: unknown, file: string, consequence: string): void {
+  if ((err as NodeJS.ErrnoException).code !== 'ENOENT')
+    process.stderr.write(`github channel: failed to read ${file} (${err}); ${consequence}\n`)
+}
+
 export function loadAccess(dir: string = STATE_DIR): AccessState {
   try {
     const raw = JSON.parse(readFileSync(join(dir, 'access.json'), 'utf8'))
@@ -306,7 +320,8 @@ export function loadAccess(dir: string = STATE_DIR): AccessState {
       configured: raw.configured === true,
     }
   }
-  catch {
+  catch (err) {
+    warnIfNotMissing(err, 'access.json', 'using safe default (deny-all)')
     return defaultAccess()
   }
 }
@@ -327,7 +342,8 @@ export function loadCursor(dir: string = STATE_DIR): PollCursor {
     const raw = JSON.parse(readFileSync(join(dir, 'cursor.json'), 'utf8'))
     return { repos: typeof raw.repos === 'object' && raw.repos ? raw.repos : {} }
   }
-  catch {
+  catch (err) {
+    warnIfNotMissing(err, 'cursor.json', 'resetting poll cursor (comments created during the gap may be skipped)')
     return { repos: {} }
   }
 }
@@ -645,6 +661,14 @@ async function runServer(): Promise<void> {
   }
   catch (err) {
     process.stderr.write(`github channel: getAuthenticated failed: ${err}\n`)
+  }
+
+  // Refuse to poll without a resolved identity: an empty selfLogin disables the
+  // self-comment filter (login === selfLogin never matches), which can loop the
+  // bot replying to its own @mentions and exhaust the PAT rate budget.
+  if (!selfLogin) {
+    process.stderr.write('github channel: could not resolve authenticated identity — refusing to poll (self-loop risk)\n')
+    process.exit(1)
   }
 
   const handle = resolveHandle(process.env.CLAUDE_GITHUB_MENTION, selfLogin)
