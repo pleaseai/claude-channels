@@ -1,0 +1,26 @@
+.please/docs/tracks/active/etag-ratelimit-backoff-20260529/spec.md
+  s_69f6dc35affa23::t_f6ddb0ae77da4b 1-109
+.please/docs/tracks/active/etag-ratelimit-backoff-20260529/metadata.json
+  s_69f6dc35affa23::t_ca07188db722ee 4
+  s_69f6dc35affa23::t_e1097c8ad225fd 1-3,5-10
+.please/docs/tracks/active/etag-ratelimit-backoff-20260529/plan.md
+  s_69f6dc35affa23::t_3f69beba441b97 1-182
+.please/docs/tracks.jsonl
+  s_69f6dc35affa23::t_e6af7db50c75e5 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2831db855f879f766b19dc7647282e942548dbc8",
+  "prompts": {},
+  "sessions": {
+    "s_69f6dc35affa23": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ef6575f2-7624-4594-93c7-36c1bf1fe6b7",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
