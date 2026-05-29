@@ -800,7 +800,10 @@ async function runServer(): Promise<void> {
     if (tickCount % rateLimitPollEvery === 0) {
       const pause = await checkRateLimitPause(octokit, rateLimitThreshold, Date.now())
       if (pause > 0) {
-        tickCount++
+        // Do NOT advance tickCount here: leaving it on a multiple of
+        // rateLimitPollEvery means the next wake-up re-runs this gate and
+        // re-verifies quota is healthy before polling. Otherwise clock drift /
+        // a not-fully-reset window could let us poll straight into a 429.
         process.stderr.write(`github channel: rate-limit low — pausing ~${Math.round(pause / 1000)}s until reset\n`)
         setTimeout(() => {
           void tick()
