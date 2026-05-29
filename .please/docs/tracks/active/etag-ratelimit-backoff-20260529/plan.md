@@ -163,7 +163,28 @@ T005 on T002+T004; T006 on T004; T008 on T003+T005+T006.
 
 ## Progress
 
-_(updated during /please:implement)_
+All tasks complete (2026-05-29). 64 github tests pass; `plugins/github/` is
+lint-clean. Implemented on `feat/etag-ratelimit-backoff-20260529`.
+
+- [x] T001 — `RepoCursor.etag` + round-trip persistence
+- [x] T002 — client seam: If-None-Match request header + response headers + `rateLimit.get`
+- [x] T003 — `pollRepo` conditional request + 304 → no-new-items (retain etag, advance since)
+- [x] T004 — pure helpers: `resolveRateLimitThreshold`, `shouldPauseForRateLimit`, `retryAfterDelay`
+- [x] T005 — `tick()` proactive pause via `GET /rate_limit` (`rateLimitPauseMs`, `checkRateLimitPause`)
+- [x] T006 — `Retry-After` honored on 429 / secondary limits (`nextBackoffDelay`)
+- [x] T007 — env vars documented in startup help text + log line
+- [x] T008 — 200→304→200 regression test; `poc/**` excluded from lint
+
+### Verification notes
+
+- `bun test plugins/github/` → 64 pass / 0 fail.
+- `bunx eslint plugins/github/` → clean.
+- `turbo check` does not typecheck the github plugin (no `check` task in its
+  package.json); the typescript-lsp surfaced no type errors in the changes.
+- `bun run lint` (repo-wide) is red on **pre-existing** markdown prettier debt
+  (root README, slack READMEs, other tracks' docs, agent-memory) — unrelated to
+  #11. An unrelated slack source-grep test (`if (!CHANNEL_ID)`) also fails
+  pre-existing. Both are out of this track's scope.
 
 ## Decision Log
 
