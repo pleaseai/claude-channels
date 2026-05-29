@@ -493,6 +493,11 @@ export function rememberPostedIds(replyText: string, ownComments: Set<number>): 
  * @mention the handle, are not self-authored, and are not duplicates. Each
  * qualifying comment is handed to `emit`. Returns the advanced cursor.
  */
+/** True when an Octokit error represents HTTP 304 Not Modified. */
+export function isNotModified(err: unknown): boolean {
+  return (err as { status?: number } | null)?.status === 304
+}
+
 export async function pollRepo(
   client: GitHubClientLike,
   ref: RepoRef,
@@ -501,14 +506,27 @@ export async function pollRepo(
   emit: (msg: GitHubMessage) => void,
 ): Promise<RepoCursor> {
   const pollStart = new Date().toISOString()
-  const res = await client.rest.issues.listCommentsForRepo({
-    owner: ref.owner,
-    repo: ref.repo,
-    since: cursor.since,
-    sort: 'created',
-    direction: 'asc',
-    per_page: 100,
-  })
+  let res: { data: RawComment[], headers?: { etag?: string } }
+  try {
+    res = await client.rest.issues.listCommentsForRepo({
+      owner: ref.owner,
+      repo: ref.repo,
+      since: cursor.since,
+      sort: 'created',
+      direction: 'asc',
+      per_page: 100,
+      // Conditional request: an unchanged repo answers 304 (Octokit throws it),
+      // which does not consume primary rate-limit quota.
+      ...(cursor.etag ? { headers: { 'if-none-match': cursor.etag } } : {}),
+    })
+  }
+  catch (err) {
+    // 304 Not Modified: no new comments. Advance the timestamp and retain the
+    // ETag so the next poll stays conditional.
+    if (isNotModified(err))
+      return { ...cursor, since: pollStart }
+    throw err
+  }
   for (const c of res.data) {
     if (!ctx.dedup.check(c.id))
       continue
@@ -534,7 +552,9 @@ export async function pollRepo(
       commentType: commentTypeFromUrl(c.issue_url),
     })
   }
-  return { ...cursor, since: pollStart }
+  // Store the fresh ETag for the next conditional request; fall back to the
+  // prior one if the response omitted the header.
+  return { ...cursor, since: pollStart, etag: res.headers?.etag ?? cursor.etag }
 }
 
 /* ------------------------------------------------------------------ */

@@ -393,6 +393,46 @@ describe('pollRepo', () => {
     )
     expect(got).toEqual([]) // null-author skipped, self-authored skipped
   })
+
+  const condCtx = {
+    handle: 'mybot',
+    selfLogin: 'mybot',
+    dedup: new Dedup(),
+    access: { mode: 'open' as const, allowedLogins: [], configured: true },
+  }
+  const ref = { owner: 'acme', repo: 'app' }
+
+  it('sends If-None-Match from the cursor and stores the response etag', async () => {
+    const { client, calls } = mockClient({ listCommentsForRepo: [], etag: 'W/"new"' })
+    const cursor = await pollRepo(client, ref, { since: 's', etag: 'W/"old"' }, { ...condCtx, dedup: new Dedup() }, () => {})
+    expect((calls.listRepo[0] as { headers?: { 'if-none-match'?: string } }).headers?.['if-none-match']).toBe('W/"old"')
+    expect(cursor.etag).toBe('W/"new"')
+    expect(cursor.since).toBeTruthy()
+  })
+
+  it('omits If-None-Match on the first poll (no stored etag)', async () => {
+    const { client, calls } = mockClient({ listCommentsForRepo: [], etag: 'W/"first"' })
+    const cursor = await pollRepo(client, ref, {}, { ...condCtx, dedup: new Dedup() }, () => {})
+    expect((calls.listRepo[0] as { headers?: unknown }).headers).toBeUndefined()
+    expect(cursor.etag).toBe('W/"first"')
+  })
+
+  it('treats a 304 as no new items: keeps etag, advances since, emits nothing', async () => {
+    const { client } = mockClient({ listThrow: Object.assign(new Error('Not Modified'), { status: 304 }) })
+    const got: GitHubMessage[] = []
+    const cursor = await pollRepo(client, ref, { since: 'old', etag: 'W/"keep"' }, { ...condCtx, dedup: new Dedup() }, m => got.push(m))
+    expect(got).toEqual([])
+    expect(cursor.etag).toBe('W/"keep"')
+    expect(cursor.since).toBeTruthy()
+    expect(cursor.since).not.toBe('old') // timestamp advanced
+  })
+
+  it('propagates non-304 errors to the caller', async () => {
+    const { client } = mockClient({ listThrow: Object.assign(new Error('boom'), { status: 500 }) })
+    await expect(
+      pollRepo(client, ref, { since: 's' }, { ...condCtx, dedup: new Dedup() }, () => {}),
+    ).rejects.toThrow('boom')
+  })
 })
 
 describe('handleToolCall', () => {
