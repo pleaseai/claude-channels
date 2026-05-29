@@ -51,7 +51,7 @@ CLAUDE_GITHUB_TRANSPORT │  PAT Octokit → tick()/pollRepo → [mention→gati
 
 ## Tasks
 
-- [ ] T001 [P] Add `@octokit/auth-app` + `@octokit/webhooks` deps (file: plugins/github/package.json)
+- [x] T001 [P] Add `@octokit/auth-app` dep (file: plugins/github/package.json) — _node:crypto used for signatures instead of @octokit/webhooks; see Decision Log_
 - [ ] T002 [P] Add `resolveTransport(raw)` selector — `poll`|`webhook`, default `poll` (file: plugins/github/server.ts)
 - [ ] T003 [P] Add App-credential config parse/validate: app id, private key, installation id, webhook secret from env (file: plugins/github/server.ts)
 - [ ] T004 Add App-installation Octokit factory via `@octokit/auth-app`, returning a `GitHubClientLike` (file: plugins/github/server.ts) (depends on T001, T003)
@@ -170,6 +170,7 @@ _(updated by /please:implement)_
 - **`issue_comment` only** for parity with current polling; PR review comments and issue/PR-opened mentions deferred (spec Out of Scope).
 - **cloudflared is a host prerequisite**, spawned as a subprocess, not bundled.
 - **App auth replaces PAT only in webhook mode**; poll mode keeps PAT.
+- **Dependency deviation (T001)**: added only `@octokit/auth-app` (App JWT/installation-token auth is non-trivial — use the official lib). Dropped the planned `@octokit/webhooks`: signature verification uses `node:crypto` HMAC-SHA256 + `timingSafeEqual`, and webhook payloads use a minimal in-file structural interface — consistent with the existing `RawComment`/`GitHubClientLike` typing style and the project's minimal-dependency, single-file convention.
 
 ## Surprises & Discoveries
 
