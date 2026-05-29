@@ -1,0 +1,136 @@
+{
+  "id": "SPEC-001",
+  "level": "V_M",
+  "domain": "plugins",
+  "feature": "github",
+  "depends": [],
+  "conflicts": [],
+  "traces": [],
+  "created_at": "2026-05-29T20:28:07.728Z",
+  "updated_at": "2026-05-29T20:28:07.728Z",
+  "source_tracks": [
+    "github-app-webhook-20260530"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "kind": "functional",
+      "statement": "**Transport selection.** A config/env switch (e.g.",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "kind": "functional",
+      "statement": "**GitHub App authentication.** In webhook mode, authenticate as a",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-003",
+      "kind": "functional",
+      "statement": "**Manual App provisioning.** The user creates the GitHub App in the",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-004",
+      "kind": "functional",
+      "statement": "**Local webhook receiver.** Run a local HTTP server that accepts",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-005",
+      "kind": "functional",
+      "statement": "**Signature verification.** Every inbound request is verified against",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-006",
+      "kind": "functional",
+      "statement": "**Event handling — `issue_comment`.** Handle `issue_comment` events",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-007",
+      "kind": "functional",
+      "statement": "**Cloudflare tunnel — quick (default).** Spawn `cloudflared` to create",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-008",
+      "kind": "functional",
+      "statement": "**Cloudflare tunnel — named (configurable).** When named-tunnel config",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-009",
+      "kind": "functional",
+      "statement": "**Webhook URL auto-registration.** On startup, after the tunnel URL is",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-010",
+      "kind": "functional",
+      "statement": "**Tunnel lifecycle management.** The `cloudflared` subprocess is",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-011",
+      "kind": "functional",
+      "statement": "**Outbound parity.** `reply`, `react`, `edit_message`, and",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-012",
+      "kind": "non-functional",
+      "statement": "**Non-breaking.** With `CLAUDE_GITHUB_TRANSPORT` unset, behavior is",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-013",
+      "kind": "non-functional",
+      "statement": "**Security invariants preserved.** Sender gating on commenter login,",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-014",
+      "kind": "non-functional",
+      "statement": "**Testability.** Transport selection, signature verification, event→",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    },
+    {
+      "id": "REQ-015",
+      "kind": "non-functional",
+      "statement": "**Single-file convention.** Implementation stays within the plugin's",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ]
+    }
+  ]
+}

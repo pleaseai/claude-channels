@@ -198,3 +198,21 @@ _(updated by /please:implement)_
 ## Progress
 
 - Review fixes (2 IMPORTANT findings from /please:review): webhook body-size cap (413, DoS guard) + post-startup cloudflared liveness monitoring (onTunnelDown → log + exit for supervisor restart). Tests added; 116 pass.
+
+## Outcomes & Retrospective
+
+### What Was Shipped
+An opt-in `CLAUDE_GITHUB_TRANSPORT=webhook` transport for the GitHub channel: GitHub App installation auth, an HMAC-verified `Bun.serve` webhook receiver for `issue_comment` events reusing the poll pipeline (mention → gating → dedup → emit), a `cloudflared` quick/named tunnel lifecycle with post-startup liveness monitoring, and automatic webhook-URL registration. Poll + PAT remains the default (non-breaking). 13 tasks, 116 tests.
+
+### What Went Well
+- Pure-helper + injectable-seam factoring made nearly all new logic unit-testable (94% funcs) without real network/subprocess/ports.
+- Reusing the existing inbound pipeline gave provable cross-transport parity (AC-6 meta test).
+- Independent review surfaced two real robustness/security gaps (body-size DoS, silent tunnel death) that were fixed + tested.
+
+### What Could Improve
+- `runServer` is now large; line coverage (~76%) is dragged by this impure bootstrap. A future tidy could extract poll/webhook setup into thinner testable units.
+- Webhook happy-path is only covered at unit/seam level + fail-fast integration; a full stubbed end-to-end stdio test was deferred.
+
+### Tech Debt Created
+- No full end-to-end webhook integration test (cloudflared + real signed delivery). Manual verification still required for the live path.
+- `server.ts` size continues to grow under the single-file convention — revisit if it becomes unwieldy.
