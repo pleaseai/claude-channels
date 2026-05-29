@@ -69,6 +69,10 @@ const DEFAULT_RATELIMIT_POLL_EVERY = 10
 const MAX_COMMENT_LENGTH = 65536
 // Local port the webhook receiver binds (cloudflared forwards to it).
 const DEFAULT_WEBHOOK_PORT = 8765
+// Reject webhook bodies larger than this before/while buffering — GitHub's
+// documented maximum payload is 25 MB, so anything bigger is malformed or
+// hostile. Bounds the memory an unauthenticated request can force us to buffer.
+const MAX_WEBHOOK_BODY_BYTES = 25 * 1024 * 1024
 const RECENT_INBOUND_CAP = 500
 const MAX_FETCH_LIMIT = 100
 const VALID_REACTIONS: ReadonlySet<string> = new Set([
@@ -525,6 +529,8 @@ export interface WebhookContext {
   loadAccess: () => AccessState
   emit: (msg: GitHubMessage) => void
   path?: string
+  // Max accepted body size in bytes (defaults to MAX_WEBHOOK_BODY_BYTES).
+  maxBodyBytes?: number
 }
 
 /**
@@ -568,7 +574,17 @@ export async function handleWebhookRequest(req: Request, ctx: WebhookContext): P
   if (req.method !== 'POST')
     return new Response('method not allowed', { status: 405 })
 
+  // Reject oversized payloads before (Content-Length, fast but attacker-spoofable)
+  // and after (raw byte length, the reliable enforcer) buffering — a public
+  // unauthenticated endpoint must not let one request balloon memory.
+  const maxBytes = ctx.maxBodyBytes ?? MAX_WEBHOOK_BODY_BYTES
+  const declared = Number.parseInt(req.headers.get('content-length') ?? '', 10)
+  if (Number.isFinite(declared) && declared > maxBytes)
+    return new Response('payload too large', { status: 413 })
+
   const raw = await req.text()
+  if (raw.length > maxBytes)
+    return new Response('payload too large', { status: 413 })
   if (!verifyWebhookSignature(ctx.secret, req.headers.get('x-hub-signature-256'), raw))
     return new Response('invalid signature', { status: 401 })
 
@@ -630,6 +646,11 @@ export interface TunnelDeps {
   // Injectable for tests; defaults to node:child_process spawn.
   spawn?: (cmd: string, args: string[]) => ChildProcessWithoutNullStreams
   readyTimeoutMs?: number
+  // Called if cloudflared exits AFTER the tunnel became ready (i.e. an
+  // unexpected death, not an intentional stop()). Defaults to logging on stderr
+  // and exiting non-zero so a supervisor restarts the channel — otherwise the
+  // process would idle with a dead tunnel and silently stop receiving webhooks.
+  onTunnelDown?: (code: number | null) => void
 }
 
 /**
@@ -667,12 +688,18 @@ export function startTunnel(cfg: TunnelConfig, deps: TunnelDeps = {}): Promise<T
 
   const spawnFn = deps.spawn ?? ((cmd, args) => spawn(cmd, args))
   const timeoutMs = deps.readyTimeoutMs ?? DEFAULT_TUNNEL_READY_TIMEOUT_MS
+  const onTunnelDown = deps.onTunnelDown ?? ((code: number | null): void => {
+    process.stderr.write(`github channel: cloudflared tunnel exited after startup (code ${code}) — webhook delivery has stopped\n`)
+    process.exit(1)
+  })
 
   return new Promise<TunnelHandle>((resolve, reject) => {
     const child = spawnFn('cloudflared', cloudflaredArgs(cfg))
     let settled = false
+    let stopping = false
     let timer: ReturnType<typeof setTimeout>
     const stop = (): void => {
+      stopping = true
       try {
         child.kill('SIGTERM')
       }
@@ -687,14 +714,23 @@ export function startTunnel(cfg: TunnelConfig, deps: TunnelDeps = {}): Promise<T
       clearTimeout(timer)
       fn()
     }
+    // Resolve as ready, and from now on treat an unexpected cloudflared exit as
+    // fatal (the pre-ready exit handler below is already a no-op once settled).
+    const resolveReady = (url: string): void => finish(() => {
+      child.on('exit', (code) => {
+        if (!stopping)
+          onTunnelDown(code)
+      })
+      resolve({ url, stop })
+    })
     const onLine = (line: string): void => {
       if (cfg.mode === 'quick') {
         const url = parseTunnelUrl(line)
         if (url)
-          finish(() => resolve({ url, stop }))
+          resolveReady(url)
       }
       else if (RE_TUNNEL_READY.test(line)) {
-        finish(() => resolve({ url: `https://${cfg.hostname}`, stop }))
+        resolveReady(`https://${cfg.hostname}`)
       }
     }
     const onData = (buf: unknown): void => {

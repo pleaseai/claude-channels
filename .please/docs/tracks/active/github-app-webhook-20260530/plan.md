@@ -194,3 +194,7 @@ _(updated by /please:implement)_
 - **Named-tunnel readiness** is detected from cloudflared's
   "Registered tunnel connection" log line (no URL is printed); the public URL is
   the configured hostname. Quick tunnels parse the `*.trycloudflare.com` URL.
+
+## Progress
+
+- Review fixes (2 IMPORTANT findings from /please:review): webhook body-size cap (413, DoS guard) + post-startup cloudflared liveness monitoring (onTunnelDown → log + exit for supervisor restart). Tests added; 116 pass.

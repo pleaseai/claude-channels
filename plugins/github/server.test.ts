@@ -489,6 +489,24 @@ describe('webhook receiver', () => {
     expect(res.status).toBe(400)
   })
 
+  it('rejects an oversized payload with 413 before verifying or emitting', async () => {
+    const { ctx, emitted } = makeCtx({ maxBodyBytes: 16 })
+    const body = commentEvent() // well over 16 bytes
+    const res = await handleWebhookRequest(signedRequest(body), ctx)
+    expect(res.status).toBe(413)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('rejects on a spoofed oversized Content-Length without buffering', async () => {
+    const { ctx } = makeCtx({ maxBodyBytes: 16 })
+    const req = new Request(`http://localhost${WEBHOOK_PATH}`, {
+      method: 'POST',
+      headers: { 'x-github-event': 'issue_comment', 'content-length': '999999999' },
+      body: 'tiny',
+    })
+    expect((await handleWebhookRequest(req, ctx)).status).toBe(413)
+  })
+
   it('processIssueCommentEvent returns the emitted message or null', () => {
     const { ctx } = makeCtx()
     const msg = processIssueCommentEvent(JSON.parse(commentEvent()), ctx)
@@ -573,6 +591,33 @@ describe('startTunnel', () => {
     const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child, readyTimeoutMs: 15 })
     await expect(p).rejects.toThrow(/did not become ready/)
     expect(child.killed).toBe(true)
+  })
+
+  it('invokes onTunnelDown if cloudflared exits AFTER becoming ready', async () => {
+    const child = fakeChild()
+    let downCode: number | null | undefined
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, {
+      spawn: () => child,
+      onTunnelDown: (code) => { downCode = code },
+    })
+    child.stderr.emit('data', Buffer.from('https://up-tunnel.trycloudflare.com\n'))
+    await p
+    child.emit('exit', 137)
+    expect(downCode).toBe(137)
+  })
+
+  it('does NOT invoke onTunnelDown when the tunnel is stopped intentionally', async () => {
+    const child = fakeChild()
+    let called = false
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, {
+      spawn: () => child,
+      onTunnelDown: () => { called = true },
+    })
+    child.stderr.emit('data', Buffer.from('https://up-tunnel.trycloudflare.com\n'))
+    const handle = await p
+    handle.stop()
+    child.emit('exit', 0)
+    expect(called).toBe(false)
   })
 })
 
