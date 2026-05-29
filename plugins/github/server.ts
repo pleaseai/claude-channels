@@ -722,7 +722,11 @@ async function runServer(): Promise<void> {
       + `  set in ${ENV_FILE}\n`
       + `  format:\n`
       + `    CLAUDE_GITHUB_TOKEN=github_pat_...\n`
-      + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`,
+      + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
+      + `  optional:\n`
+      + `    CLAUDE_GITHUB_POLL_INTERVAL_MS=${DEFAULT_POLL_INTERVAL_MS}        # base poll interval\n`
+      + `    CLAUDE_GITHUB_RATELIMIT_THRESHOLD=${DEFAULT_RATELIMIT_THRESHOLD}        # pause polling when core quota <= this\n`
+      + `    CLAUDE_GITHUB_RATELIMIT_POLL_EVERY=${DEFAULT_RATELIMIT_POLL_EVERY}       # probe GET /rate_limit every N ticks\n`,
     )
     process.exit(1)
   }
@@ -827,7 +831,7 @@ async function runServer(): Promise<void> {
     }, delay)
   }
 
-  process.stderr.write(`github channel: polling ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} every ${pollInterval}ms (mention @${handle})\n`)
+  process.stderr.write(`github channel: polling ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} every ${pollInterval}ms (mention @${handle}); conditional requests on, pause when core quota <= ${rateLimitThreshold}\n`)
   void tick()
 }
 
