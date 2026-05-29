@@ -27,6 +27,9 @@ const {
   commentTypeFromUrl,
   resolvePollInterval,
   backoffDelay,
+  resolveRateLimitThreshold,
+  shouldPauseForRateLimit,
+  retryAfterDelay,
   resolveHandle,
   seedCursor,
   rememberPostedIds,
@@ -209,6 +212,27 @@ describe('config + backoff helpers', () => {
     seedCursor(cursor, [{ owner: 'acme', repo: 'app' }, { owner: 'foo', repo: 'bar' }], 'now')
     expect(cursor.repos['acme/app'].since).toBe('old') // preserved
     expect(cursor.repos['foo/bar'].since).toBe('now') // seeded
+  })
+})
+
+describe('rate-limit helpers', () => {
+  it('resolves the threshold from env, allowing 0 and falling back', () => {
+    expect(resolveRateLimitThreshold('100', 50)).toBe(100)
+    expect(resolveRateLimitThreshold('0', 50)).toBe(0) // 0 = pause only at full exhaustion
+    expect(resolveRateLimitThreshold(undefined, 50)).toBe(50)
+    expect(resolveRateLimitThreshold('nope', 50)).toBe(50)
+    expect(resolveRateLimitThreshold('-5', 50)).toBe(50)
+  })
+  it('pauses when remaining is at or below the threshold', () => {
+    expect(shouldPauseForRateLimit(10, 50)).toBe(true)
+    expect(shouldPauseForRateLimit(50, 50)).toBe(true) // boundary
+    expect(shouldPauseForRateLimit(200, 50)).toBe(false)
+  })
+  it('reads Retry-After seconds into ms, undefined when absent or invalid', () => {
+    expect(retryAfterDelay({ response: { headers: { 'retry-after': '30' } } })).toBe(30000)
+    expect(retryAfterDelay({ response: { headers: {} } })).toBeUndefined()
+    expect(retryAfterDelay(new Error('x'))).toBeUndefined()
+    expect(retryAfterDelay({ response: { headers: { 'retry-after': 'soon' } } })).toBeUndefined()
   })
 })
 

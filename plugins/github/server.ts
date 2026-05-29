@@ -264,6 +264,35 @@ export function backoffDelay(base: number, failures: number): number {
   return base * Math.min(2 ** failures, MAX_BACKOFF_MULTIPLIER)
 }
 
+/**
+ * Resolve the proactive-pause quota threshold from an env string. Unlike the
+ * poll interval, 0 is valid (= only pause once quota is fully exhausted), so
+ * negative / non-numeric values fall back to the default.
+ */
+export function resolveRateLimitThreshold(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+/** Whether remaining core quota is low enough to proactively pause polling. */
+export function shouldPauseForRateLimit(remaining: number, threshold: number): boolean {
+  return remaining <= threshold
+}
+
+/**
+ * Parse a `Retry-After` header (seconds) from an Octokit error into milliseconds.
+ * Returns undefined when the header is absent or non-numeric. GitHub sends this
+ * on 429 / secondary-rate-limit responses.
+ */
+export function retryAfterDelay(err: unknown): number | undefined {
+  const headers = (err as { response?: { headers?: Record<string, string> } } | null)?.response?.headers
+  const raw = headers?.['retry-after']
+  if (raw === undefined)
+    return undefined
+  const secs = Number.parseInt(raw, 10)
+  return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : undefined
+}
+
 /** Mention handle defaults to the authenticated login when unset. */
 export function resolveHandle(mention: string | undefined, selfLogin: string): string {
   const trimmed = mention?.trim()
