@@ -1,0 +1,40 @@
+plugins/github/skills/configure/SKILL.md
+  s_40c4db656d55bb::t_8af215efef41a0 75-108
+plugins/github/server.test.ts
+  s_40c4db656d55bb::t_eabacdf5a54348 622-637,645-649,651-667,669-678,680-687
+  s_40c4db656d55bb::t_b7dd81b167d728 1130-1150,1154-1163
+  s_40c4db656d55bb::t_b5b3217002c9d7 1151-1153
+  s_40c4db656d55bb::t_3c7d476a9c8446 638-644,650,668,679
+  s_40c4db656d55bb::t_71b9b7eaa0a32d 53
+plugins/github/README.ko.md
+  s_40c4db656d55bb::t_7cfd6ef15edb04 59-91
+  s_40c4db656d55bb::t_b1aa2d18c61f01 5
+plugins/github/README.md
+  s_40c4db656d55bb::t_1f99508eac695e 59-106
+  s_40c4db656d55bb::t_22e0225f267063 5
+.please/docs/tracks/active/github-app-webhook-20260530/plan.md
+  s_40c4db656d55bb::t_6d1028093fa43a 177-196
+  s_40c4db656d55bb::t_5e50b530f3a6a1 64-66
+.please/docs/knowledge/tech-stack.md
+  s_40c4db656d55bb::t_203b9bc058d05d 19-37
+plugins/github/server.ts
+  s_40c4db656d55bb::t_4b9166f1315b54 70-71
+  s_40c4db656d55bb::t_c45c750d2fc6f1 761-827
+  s_40c4db656d55bb::t_fb77259a7385cd 1202-1205,1207-1252,1272,1279-1280,1282-1289,1293,1296,1298-1300,1317-1346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "511001cacdee9bee3aab091c170ef184bd74ac64",
+  "prompts": {},
+  "sessions": {
+    "s_40c4db656d55bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7da7c65-f8d3-4161-a933-4f6ce207b216",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
