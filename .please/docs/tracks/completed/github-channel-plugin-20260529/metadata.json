@@ -1,0 +1,11 @@
+{
+  "track_id": "github-channel-plugin-20260529",
+  "type": "feature",
+  "status": "review",
+  "created_at": "2026-05-29T00:00:00Z",
+  "updated_at": "2026-05-29T12:00:00Z",
+  "issue": "#6",
+  "code_branch": "feat/github-channel-plugin-20260529",
+  "code_pr": "#7",
+  "pr": "#7"
+}
