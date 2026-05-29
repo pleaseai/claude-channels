@@ -7,6 +7,7 @@ allowed-tools:
   - Write
   - Bash(ls *)
   - Bash(mkdir *)
+  - Bash(chmod *)
 ---
 
 # /github:configure — GitHub Channel Setup
@@ -38,12 +39,16 @@ Read `~/.claude/channels/github/.env` (missing file = not configured) and show:
 2. Read existing `.env`; update/add `CLAUDE_GITHUB_TOKEN=<token>`. If a repo list
    was provided, set `CLAUDE_GITHUB_REPOS=<list>`; otherwise preserve the
    existing value. Preserve other keys. No quotes around values.
-3. Set the file permission to `0o600`.
+3. **Set the file permission with `chmod 600 ~/.claude/channels/github/.env`** —
+   the `Write` tool creates the file under the default umask (0644 on macOS),
+   which leaves the PAT world-readable. This `chmod` step is mandatory and must
+   run immediately after writing, every time `.env` is created or updated.
 4. Confirm (masked), then show the no-args status.
 
 ### `repos <owner/repo,...>` — set watched repositories
 
-Read `.env`, set `CLAUDE_GITHUB_REPOS`, write back, confirm.
+Read `.env`, set `CLAUDE_GITHUB_REPOS`, write back, then re-run
+`chmod 600 ~/.claude/channels/github/.env` (Write resets the mode), confirm.
 
 ### `clear` — remove credentials
 
