@@ -1,6 +1,6 @@
+import type { Buffer } from 'node:buffer'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import type { GitHubClientLike, GitHubMessage } from './server.ts'
-import { Buffer } from 'node:buffer'
+import type { GitHubClientLike, GitHubMessage } from './server'
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,7 +12,7 @@ import { afterAll, describe, expect, it } from 'bun:test'
 // save*/load* helpers (which use the module-level STATE_DIR) stay sandboxed.
 const STATE_DIR = mkdtempSync(join(tmpdir(), 'gh-channel-test-'))
 process.env.CLAUDE_GITHUB_STATE_DIR = STATE_DIR
-const mod = await import('./server.ts')
+const mod = await import('./server')
 const {
   parseRepos,
   parseChatId,
@@ -24,6 +24,12 @@ const {
   isWatchedRepo,
   isValidReaction,
   buildChannelMeta,
+  commentTypeFromUrl,
+  resolvePollInterval,
+  backoffDelay,
+  resolveHandle,
+  seedCursor,
+  rememberPostedIds,
   Dedup,
   loadAccess,
   saveAccess,
@@ -50,13 +56,28 @@ function mockClient(overrides: Partial<Record<string, unknown>> = {}): { client:
   const client = {
     rest: {
       issues: {
-        createComment: async (p: unknown) => { calls.create.push(p); return { data: { id: nextId++, html_url: 'https://gh/c' } } },
-        updateComment: async (p: unknown) => { calls.update.push(p); return { data: { id: (p as { comment_id: number }).comment_id, html_url: 'https://gh/c' } } },
-        listComments: async (p: unknown) => { calls.list.push(p); return { data: (overrides.listComments as unknown[]) ?? [] } },
-        listCommentsForRepo: async (p: unknown) => { calls.listRepo.push(p); return { data: (overrides.listCommentsForRepo as unknown[]) ?? [] } },
+        createComment: async (p: unknown) => {
+          calls.create.push(p)
+          return { data: { id: nextId++, html_url: 'https://gh/c' } }
+        },
+        updateComment: async (p: unknown) => {
+          calls.update.push(p)
+          return { data: { id: (p as { comment_id: number }).comment_id, html_url: 'https://gh/c' } }
+        },
+        listComments: async (p: unknown) => {
+          calls.list.push(p)
+          return { data: (overrides.listComments as unknown[]) ?? [] }
+        },
+        listCommentsForRepo: async (p: unknown) => {
+          calls.listRepo.push(p)
+          return { data: (overrides.listCommentsForRepo as unknown[]) ?? [] }
+        },
       },
       reactions: {
-        createForIssueComment: async (p: unknown) => { calls.react.push(p); return {} },
+        createForIssueComment: async (p: unknown) => {
+          calls.react.push(p)
+          return {}
+        },
       },
     },
   } as unknown as GitHubClientLike
@@ -96,6 +117,14 @@ describe('issueNumberFromUrl', () => {
     expect(issueNumberFromUrl('https://api.github.com/repos/acme/app/issues/42')).toBe(42)
     expect(issueNumberFromUrl('https://api.github.com/repos/acme/app/pulls/7')).toBe(7)
     expect(issueNumberFromUrl(undefined)).toBeUndefined()
+  })
+})
+
+describe('commentTypeFromUrl', () => {
+  it('classifies pulls urls as pr, everything else as issue', () => {
+    expect(commentTypeFromUrl('https://api.github.com/repos/acme/app/pulls/7')).toBe('pr')
+    expect(commentTypeFromUrl('https://api.github.com/repos/acme/app/issues/5')).toBe('issue')
+    expect(commentTypeFromUrl(undefined)).toBe('issue')
   })
 })
 
@@ -141,6 +170,32 @@ describe('outbound gating', () => {
   })
 })
 
+describe('config + backoff helpers', () => {
+  it('resolves poll interval from env with fallback', () => {
+    expect(resolvePollInterval('3000', 5000)).toBe(3000)
+    expect(resolvePollInterval(undefined, 5000)).toBe(5000)
+    expect(resolvePollInterval('0', 5000)).toBe(5000)
+    expect(resolvePollInterval('nope', 5000)).toBe(5000)
+  })
+  it('computes capped exponential backoff', () => {
+    expect(backoffDelay(1000, 0)).toBe(1000)
+    expect(backoffDelay(1000, 1)).toBe(2000)
+    expect(backoffDelay(1000, 3)).toBe(8000)
+    expect(backoffDelay(1000, 20)).toBe(12000) // capped at 12x
+  })
+  it('resolves the mention handle, defaulting to self', () => {
+    expect(resolveHandle('botname', 'self')).toBe('botname')
+    expect(resolveHandle('  ', 'self')).toBe('self')
+    expect(resolveHandle(undefined, 'self')).toBe('self')
+  })
+  it('seeds cursors only for unseen repos', () => {
+    const cursor: { repos: Record<string, { since?: string }> } = { repos: { 'acme/app': { since: 'old' } } }
+    seedCursor(cursor, [{ owner: 'acme', repo: 'app' }, { owner: 'foo', repo: 'bar' }], 'now')
+    expect(cursor.repos['acme/app'].since).toBe('old') // preserved
+    expect(cursor.repos['foo/bar'].since).toBe('now') // seeded
+  })
+})
+
 describe('reactions + dedup + meta', () => {
   it('validates reaction names', () => {
     expect(isValidReaction('rocket')).toBe(true)
@@ -170,6 +225,13 @@ describe('reactions + dedup + meta', () => {
     expect(meta.message_id).toBe('99')
     expect(meta.user).toBe('alice')
     expect(meta.comment_type).toBe('issue')
+  })
+  it('remembers single and multi posted comment ids', () => {
+    const own = new Set<number>()
+    rememberPostedIds('commented (id: 42)', own)
+    rememberPostedIds('commented in 2 parts (ids: 7, 8)', own)
+    rememberPostedIds('nothing here', own)
+    expect([...own].sort((a, b) => a - b)).toEqual([7, 8, 42])
   })
 })
 
@@ -268,6 +330,7 @@ describe('pollRepo', () => {
     expect(got.map(m => m.commentId)).toEqual([1, 5])
     expect(got[0].commentType).toBe('issue')
     expect(got[1].commentType).toBe('pr')
+    expect(got[1].issueNumber).toBe(7)
     expect(cursor.since).toBeTruthy()
 
     // Second poll over the same data emits nothing (deduped).
@@ -308,7 +371,7 @@ describe('loadDotEnv', () => {
     writeFileSync(join(STATE_DIR, '.env'), 'GH_TEST_LOADENV=fromfile\n')
     delete process.env.GH_TEST_LOADENV
     loadDotEnv()
-    expect(process.env.GH_TEST_LOADENV).toBe('fromfile')
+    expect(String(process.env.GH_TEST_LOADENV)).toBe('fromfile')
   })
 })
 

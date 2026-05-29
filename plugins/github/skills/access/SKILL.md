@@ -27,8 +27,8 @@ Arguments passed: `$ARGUMENTS`
 
 ```jsonc
 {
-  "mode": "allowlist",          // "allowlist" | "open"
-  "allowedLogins": ["octocat"], // GitHub logins gated on the commenter identity
+  "mode": "allowlist", // "allowlist" | "open"
+  "allowedLogins": ["octocat"], // logins gated on the commenter identity
   "configured": true
 }
 ```

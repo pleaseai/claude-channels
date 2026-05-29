@@ -32,7 +32,7 @@ const RE_REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g
 const RE_ISSUE_NUMBER = /\/(?:issues|pulls)\/(\d+)(?:$|[#/])/
 const RE_NEWLINES = /[\r\n]+/g
 const RE_LEADING_NEWLINES = /^\n+/
-const RE_COMMENT_IDS = /id(?:s)?: ([\d, ]+)/
+const RE_COMMENT_IDS = /ids?: ([\d, ]+)/
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -46,6 +46,7 @@ const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const CURSOR_FILE = join(STATE_DIR, 'cursor.json')
 
 const DEFAULT_POLL_INTERVAL_MS = 5000
+const MAX_BACKOFF_MULTIPLIER = 12
 const MAX_COMMENT_LENGTH = 65536
 const RECENT_INBOUND_CAP = 500
 const MAX_FETCH_LIMIT = 100
@@ -234,6 +235,41 @@ export function buildChannelMeta(msg: GitHubMessage): Record<string, string> {
   }
 }
 
+/** Classify a comment by its `issue_url` — the REST API uses `/pulls/` for PRs. */
+export function commentTypeFromUrl(issueUrl: string | undefined): CommentType {
+  return issueUrl?.includes('/pulls/') ? 'pr' : 'issue'
+}
+
+/** Resolve the poll interval from an env string, falling back to a default. */
+export function resolvePollInterval(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+/** Exponential backoff delay (base × 2^failures), capped. */
+export function backoffDelay(base: number, failures: number): number {
+  return base * Math.min(2 ** failures, MAX_BACKOFF_MULTIPLIER)
+}
+
+/** Mention handle defaults to the authenticated login when unset. */
+export function resolveHandle(mention: string | undefined, selfLogin: string): string {
+  const trimmed = mention?.trim()
+  return trimmed || selfLogin
+}
+
+/**
+ * Seed any unseen repo's cursor at `startIso` so a fresh start only delivers
+ * comments created after boot (no historical replay). Mutates and returns.
+ */
+export function seedCursor(cursor: PollCursor, repos: RepoRef[], startIso: string): PollCursor {
+  for (const ref of repos) {
+    const key = `${ref.owner}/${ref.repo}`
+    if (!cursor.repos[key])
+      cursor.repos[key] = { since: startIso }
+  }
+  return cursor
+}
+
 /** Bounded FIFO de-duplicator keyed by comment id. */
 export class Dedup {
   private readonly seen = new Set<number>()
@@ -395,12 +431,7 @@ export async function handleToolCall(
     switch (name) {
       case 'reply': {
         const text = await replyCore(deps.client, deps.repos, { chat_id: args.chat_id as string, body: args.body as string })
-        // Track posted ids so edit_message can guard on ownership.
-        const m = RE_COMMENT_IDS.exec(text)
-        if (m) {
-          for (const id of m[1].split(','))
-            deps.ownComments.add(Number.parseInt(id.trim(), 10))
-        }
+        rememberPostedIds(text, deps.ownComments)
         return { text }
       }
       case 'react':
@@ -416,6 +447,15 @@ export async function handleToolCall(
   catch (err) {
     return { text: `${name} failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
   }
+}
+
+/** Record comment ids reported by replyCore so edit_message can guard ownership. */
+export function rememberPostedIds(replyText: string, ownComments: Set<number>): void {
+  const m = RE_COMMENT_IDS.exec(replyText)
+  if (!m)
+    return
+  for (const id of m[1].split(','))
+    ownComments.add(Number.parseInt(id.trim(), 10))
 }
 
 /* ------------------------------------------------------------------ */
@@ -465,7 +505,7 @@ export async function pollRepo(
       body: c.body ?? '',
       htmlUrl: c.html_url,
       createdAt: c.created_at,
-      commentType: c.issue_url?.includes('/pull/') ? 'pr' : 'issue',
+      commentType: commentTypeFromUrl(c.issue_url),
     })
   }
   return { ...cursor, since: pollStart }
@@ -571,7 +611,7 @@ async function runServer(): Promise<void> {
     process.exit(1)
   }
 
-  const pollInterval = Number.parseInt(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS ?? '', 10) || DEFAULT_POLL_INTERVAL_MS
+  const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
   const octokit = new Octokit({ auth: token }) as unknown as GitHubClientLike
   const ownComments = new Set<number>()
   const dedup = new Dedup()
@@ -590,7 +630,8 @@ async function runServer(): Promise<void> {
 
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>
-    const { text, isError } = await handleToolCall(req.params.name, args, { client: octokit, repos, ownComments, selfLogin })
+    const deps: ToolDeps = { client: octokit, repos, ownComments, selfLogin }
+    const { text, isError } = await handleToolCall(req.params.name, args, deps)
     return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) }
   })
 
@@ -606,22 +647,18 @@ async function runServer(): Promise<void> {
     process.stderr.write(`github channel: getAuthenticated failed: ${err}\n`)
   }
 
-  const handle = process.env.CLAUDE_GITHUB_MENTION || selfLogin
-  const cursor = loadCursor()
-  const nowIso = new Date().toISOString()
-  for (const ref of repos) {
-    const key = `${ref.owner}/${ref.repo}`
-    if (!cursor.repos[key])
-      cursor.repos[key] = { since: nowIso } // only deliver comments created after startup
-  }
+  const handle = resolveHandle(process.env.CLAUDE_GITHUB_MENTION, selfLogin)
+  const cursor = seedCursor(loadCursor(), repos, new Date().toISOString())
 
   const emit = (msg: GitHubMessage): void => {
-    mcp.notification({
-      method: 'notifications/claude/channel',
-      params: { content: msg.body, meta: buildChannelMeta(msg) },
-    }).catch((err) => {
-      process.stderr.write(`github channel: failed to deliver comment ${msg.commentId}: ${err}\n`)
-    })
+    mcp
+      .notification({
+        method: 'notifications/claude/channel',
+        params: { content: msg.body, meta: buildChannelMeta(msg) },
+      })
+      .catch((err) => {
+        process.stderr.write(`github channel: failed to deliver comment ${msg.commentId}: ${err}\n`)
+      })
   }
 
   let failures = 0
@@ -639,8 +676,9 @@ async function runServer(): Promise<void> {
       failures++
       process.stderr.write(`github channel: poll failed (${failures}): ${err}\n`)
     }
-    const delay = pollInterval * Math.min(2 ** failures, 12)
-    setTimeout(() => { void tick() }, delay)
+    setTimeout(() => {
+      void tick()
+    }, backoffDelay(pollInterval, failures))
   }
 
   process.stderr.write(`github channel: polling ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} every ${pollInterval}ms (mention @${handle})\n`)
