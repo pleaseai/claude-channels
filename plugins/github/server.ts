@@ -47,6 +47,10 @@ const CURSOR_FILE = join(STATE_DIR, 'cursor.json')
 
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const MAX_BACKOFF_MULTIPLIER = 12
+// Proactive backoff: pause polling when core quota drops to/below this many
+// requests, and probe GET /rate_limit every this-many ticks.
+const DEFAULT_RATELIMIT_THRESHOLD = 50
+const DEFAULT_RATELIMIT_POLL_EVERY = 10
 const MAX_COMMENT_LENGTH = 65536
 const RECENT_INBOUND_CAP = 500
 const MAX_FETCH_LIMIT = 100
@@ -93,9 +97,13 @@ export interface GitHubMessage {
 }
 
 interface RepoCursor {
-  // `since` is the only cursor field used today. Conditional requests
-  // (ETag/If-None-Match) are deferred — see plan Decision Log.
+  // Timestamp cursor: only deliver comments created after this instant.
   since?: string
+  // Weak/strong ETag from the previous `listCommentsForRepo` response, replayed
+  // as `If-None-Match` on the next poll so an unchanged repo answers 304 (which
+  // does not consume primary rate-limit quota). Round-trips via loadCursor,
+  // which passes `repos` through verbatim. Absent on first poll / legacy cursors.
+  etag?: string
 }
 
 export interface PollCursor {
@@ -119,10 +127,16 @@ export interface GitHubClientLike {
       createComment: (p: { owner: string, repo: string, issue_number: number, body: string }) => Promise<{ data: { id: number, html_url: string } }>
       updateComment: (p: { owner: string, repo: string, comment_id: number, body: string }) => Promise<{ data: { id: number, html_url: string } }>
       listComments: (p: { owner: string, repo: string, issue_number: number, per_page: number }) => Promise<{ data: Array<{ id: number, body?: string, user?: { login?: string } | null, created_at: string }> }>
-      listCommentsForRepo: (p: { owner: string, repo: string, since?: string, sort: 'created' | 'updated', direction: 'asc' | 'desc', per_page: number }) => Promise<{ data: RawComment[] }>
+      listCommentsForRepo: (p: { owner: string, repo: string, since?: string, sort: 'created' | 'updated', direction: 'asc' | 'desc', per_page: number, headers?: { 'if-none-match'?: string } }) => Promise<{ data: RawComment[], headers?: { etag?: string } }>
     }
     reactions: {
       createForIssueComment: (p: { owner: string, repo: string, comment_id: number, content: string }) => Promise<unknown>
+    }
+    // Read the authenticated principal's rate-limit budget without spending it:
+    // GET /rate_limit is exempt from the primary rate limit. Drives proactive
+    // backoff (the poll response can't — a 304 omits the x-ratelimit-* headers).
+    rateLimit: {
+      get: () => Promise<{ data: { resources: { core: { remaining: number, reset: number } } } }>
     }
   }
 }
@@ -252,6 +266,72 @@ export function resolvePollInterval(raw: string | undefined, fallback: number): 
 /** Exponential backoff delay (base × 2^failures), capped. */
 export function backoffDelay(base: number, failures: number): number {
   return base * Math.min(2 ** failures, MAX_BACKOFF_MULTIPLIER)
+}
+
+/**
+ * Next poll delay after a failure: the larger of the exponential backoff and any
+ * server-provided `Retry-After` (so we never retry sooner than GitHub asks on a
+ * 429 / secondary-rate-limit response).
+ */
+export function nextBackoffDelay(base: number, failures: number, retryAfterMs?: number): number {
+  const exp = backoffDelay(base, failures)
+  return retryAfterMs !== undefined ? Math.max(exp, retryAfterMs) : exp
+}
+
+/**
+ * Resolve the proactive-pause quota threshold from an env string. Unlike the
+ * poll interval, 0 is valid (= only pause once quota is fully exhausted), so
+ * negative / non-numeric values fall back to the default.
+ */
+export function resolveRateLimitThreshold(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+/** Whether remaining core quota is low enough to proactively pause polling. */
+export function shouldPauseForRateLimit(remaining: number, threshold: number): boolean {
+  return remaining <= threshold
+}
+
+/**
+ * Parse a `Retry-After` header (seconds) from an Octokit error into milliseconds.
+ * Returns undefined when the header is absent or non-numeric. GitHub sends this
+ * on 429 / secondary-rate-limit responses.
+ */
+export function retryAfterDelay(err: unknown): number | undefined {
+  const headers = (err as { response?: { headers?: Record<string, string> } } | null)?.response?.headers
+  const raw = headers?.['retry-after']
+  if (raw === undefined)
+    return undefined
+  const secs = Number.parseInt(raw, 10)
+  return Number.isFinite(secs) && secs >= 0 ? secs * 1000 : undefined
+}
+
+/**
+ * Milliseconds to pause polling given a rate-limit snapshot, or 0 to keep
+ * polling. Pauses until the `core.reset` instant when remaining quota is at/below
+ * the threshold; clamps to 0 if the reset is already past.
+ */
+export function rateLimitPauseMs(remaining: number, threshold: number, resetEpochSec: number, nowMs: number): number {
+  if (!shouldPauseForRateLimit(remaining, threshold))
+    return 0
+  return Math.max(0, resetEpochSec * 1000 - nowMs)
+}
+
+/**
+ * Fetch the current core rate-limit budget and return how long to pause (ms).
+ * Fails open (returns 0) on any error — a rate-limit probe must never be the
+ * reason polling stops. `GET /rate_limit` does not itself consume quota.
+ */
+export async function checkRateLimitPause(client: GitHubClientLike, threshold: number, nowMs: number): Promise<number> {
+  try {
+    const { data } = await client.rest.rateLimit.get()
+    const core = data.resources.core
+    return rateLimitPauseMs(core.remaining, threshold, core.reset, nowMs)
+  }
+  catch {
+    return 0
+  }
 }
 
 /** Mention handle defaults to the authenticated login when unset. */
@@ -483,6 +563,11 @@ export function rememberPostedIds(replyText: string, ownComments: Set<number>): 
  * @mention the handle, are not self-authored, and are not duplicates. Each
  * qualifying comment is handed to `emit`. Returns the advanced cursor.
  */
+/** True when an Octokit error represents HTTP 304 Not Modified. */
+export function isNotModified(err: unknown): boolean {
+  return (err as { status?: number } | null)?.status === 304
+}
+
 export async function pollRepo(
   client: GitHubClientLike,
   ref: RepoRef,
@@ -491,14 +576,27 @@ export async function pollRepo(
   emit: (msg: GitHubMessage) => void,
 ): Promise<RepoCursor> {
   const pollStart = new Date().toISOString()
-  const res = await client.rest.issues.listCommentsForRepo({
-    owner: ref.owner,
-    repo: ref.repo,
-    since: cursor.since,
-    sort: 'created',
-    direction: 'asc',
-    per_page: 100,
-  })
+  let res: { data: RawComment[], headers?: { etag?: string } }
+  try {
+    res = await client.rest.issues.listCommentsForRepo({
+      owner: ref.owner,
+      repo: ref.repo,
+      since: cursor.since,
+      sort: 'created',
+      direction: 'asc',
+      per_page: 100,
+      // Conditional request: an unchanged repo answers 304 (Octokit throws it),
+      // which does not consume primary rate-limit quota.
+      ...(cursor.etag ? { headers: { 'if-none-match': cursor.etag } } : {}),
+    })
+  }
+  catch (err) {
+    // 304 Not Modified: no new comments. Advance the timestamp and retain the
+    // ETag so the next poll stays conditional.
+    if (isNotModified(err))
+      return { ...cursor, since: pollStart }
+    throw err
+  }
   for (const c of res.data) {
     if (!ctx.dedup.check(c.id))
       continue
@@ -524,7 +622,9 @@ export async function pollRepo(
       commentType: commentTypeFromUrl(c.issue_url),
     })
   }
-  return { ...cursor, since: pollStart }
+  // Store the fresh ETag for the next conditional request; fall back to the
+  // prior one if the response omitted the header.
+  return { ...cursor, since: pollStart, etag: res.headers?.etag ?? cursor.etag }
 }
 
 /* ------------------------------------------------------------------ */
@@ -622,12 +722,18 @@ async function runServer(): Promise<void> {
       + `  set in ${ENV_FILE}\n`
       + `  format:\n`
       + `    CLAUDE_GITHUB_TOKEN=github_pat_...\n`
-      + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`,
+      + `    CLAUDE_GITHUB_REPOS=owner/repo,owner/repo2\n`
+      + `  optional:\n`
+      + `    CLAUDE_GITHUB_POLL_INTERVAL_MS=${DEFAULT_POLL_INTERVAL_MS}        # base poll interval\n`
+      + `    CLAUDE_GITHUB_RATELIMIT_THRESHOLD=${DEFAULT_RATELIMIT_THRESHOLD}        # pause polling when core quota <= this\n`
+      + `    CLAUDE_GITHUB_RATELIMIT_POLL_EVERY=${DEFAULT_RATELIMIT_POLL_EVERY}       # probe GET /rate_limit every N ticks\n`,
     )
     process.exit(1)
   }
 
   const pollInterval = resolvePollInterval(process.env.CLAUDE_GITHUB_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS)
+  const rateLimitThreshold = resolveRateLimitThreshold(process.env.CLAUDE_GITHUB_RATELIMIT_THRESHOLD, DEFAULT_RATELIMIT_THRESHOLD)
+  const rateLimitPollEvery = resolvePollInterval(process.env.CLAUDE_GITHUB_RATELIMIT_POLL_EVERY, DEFAULT_RATELIMIT_POLL_EVERY)
   const octokit = new Octokit({ auth: token }) as unknown as GitHubClientLike
   const ownComments = new Set<number>()
   const dedup = new Dedup()
@@ -686,8 +792,28 @@ async function runServer(): Promise<void> {
   }
 
   let failures = 0
+  let tickCount = 0
   const tick = async (): Promise<void> => {
+    // Proactive rate-limit gate: probe GET /rate_limit every N ticks (it does not
+    // consume quota) and pause until the reset instant when remaining quota is
+    // low, rather than blindly polling into a 429.
+    if (tickCount % rateLimitPollEvery === 0) {
+      const pause = await checkRateLimitPause(octokit, rateLimitThreshold, Date.now())
+      if (pause > 0) {
+        // Do NOT advance tickCount here: leaving it on a multiple of
+        // rateLimitPollEvery means the next wake-up re-runs this gate and
+        // re-verifies quota is healthy before polling. Otherwise clock drift /
+        // a not-fully-reset window could let us poll straight into a 429.
+        process.stderr.write(`github channel: rate-limit low — pausing ~${Math.round(pause / 1000)}s until reset\n`)
+        setTimeout(() => {
+          void tick()
+        }, pause)
+        return
+      }
+    }
+    tickCount++
     const access = loadAccess()
+    let delay = pollInterval
     try {
       for (const ref of repos) {
         const key = `${ref.owner}/${ref.repo}`
@@ -698,14 +824,17 @@ async function runServer(): Promise<void> {
     }
     catch (err) {
       failures++
-      process.stderr.write(`github channel: poll failed (${failures}): ${err}\n`)
+      const retryAfterMs = retryAfterDelay(err)
+      delay = nextBackoffDelay(pollInterval, failures, retryAfterMs)
+      const suffix = retryAfterMs !== undefined ? ` (Retry-After ~${Math.round(retryAfterMs / 1000)}s)` : ''
+      process.stderr.write(`github channel: poll failed (${failures})${suffix}: ${err}\n`)
     }
     setTimeout(() => {
       void tick()
-    }, backoffDelay(pollInterval, failures))
+    }, delay)
   }
 
-  process.stderr.write(`github channel: polling ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} every ${pollInterval}ms (mention @${handle})\n`)
+  process.stderr.write(`github channel: polling ${repos.map(r => `${r.owner}/${r.repo}`).join(', ')} every ${pollInterval}ms (mention @${handle}); conditional requests on, pause when core quota <= ${rateLimitThreshold}\n`)
   void tick()
 }
 

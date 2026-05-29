@@ -1,0 +1,12 @@
+{
+  "track_id": "etag-ratelimit-backoff-20260529",
+  "type": "chore",
+  "status": "review",
+  "created_at": "2026-05-29T00:00:00Z",
+  "updated_at": "2026-05-29T12:00:00Z",
+  "issue": "#11",
+  "pr": "#12",
+  "code_pr": "#12",
+  "project": "",
+  "code_branch": "feat/etag-ratelimit-backoff-20260529"
+}

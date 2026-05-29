@@ -27,6 +27,12 @@ const {
   commentTypeFromUrl,
   resolvePollInterval,
   backoffDelay,
+  resolveRateLimitThreshold,
+  shouldPauseForRateLimit,
+  retryAfterDelay,
+  rateLimitPauseMs,
+  checkRateLimitPause,
+  nextBackoffDelay,
   resolveHandle,
   seedCursor,
   rememberPostedIds,
@@ -51,7 +57,7 @@ afterAll(() => {
 const WATCHED = [{ owner: 'acme', repo: 'app' }]
 
 function mockClient(overrides: Partial<Record<string, unknown>> = {}): { client: GitHubClientLike, calls: Record<string, unknown[]> } {
-  const calls: Record<string, unknown[]> = { create: [], update: [], react: [], list: [], listRepo: [] }
+  const calls: Record<string, unknown[]> = { create: [], update: [], react: [], list: [], listRepo: [], rateLimit: [] }
   let nextId = 1000
   const client = {
     rest: {
@@ -70,13 +76,29 @@ function mockClient(overrides: Partial<Record<string, unknown>> = {}): { client:
         },
         listCommentsForRepo: async (p: unknown) => {
           calls.listRepo.push(p)
-          return { data: (overrides.listCommentsForRepo as unknown[]) ?? [] }
+          // Simulate Octokit throwing (e.g. 304 Not Modified, 429) when configured.
+          if (overrides.listThrow)
+            throw overrides.listThrow
+          return {
+            data: (overrides.listCommentsForRepo as unknown[]) ?? [],
+            headers: { etag: overrides.etag as string | undefined },
+          }
         },
       },
       reactions: {
         createForIssueComment: async (p: unknown) => {
           calls.react.push(p)
           return {}
+        },
+      },
+      rateLimit: {
+        get: async () => {
+          calls.rateLimit.push({})
+          if (overrides.rateLimitThrow)
+            throw overrides.rateLimitThrow
+          const core = (overrides.rateLimit as { remaining: number, reset: number } | undefined)
+            ?? { remaining: 5000, reset: 0 }
+          return { data: { resources: { core } } }
         },
       },
     },
@@ -196,6 +218,65 @@ describe('config + backoff helpers', () => {
   })
 })
 
+describe('rate-limit helpers', () => {
+  it('resolves the threshold from env, allowing 0 and falling back', () => {
+    expect(resolveRateLimitThreshold('100', 50)).toBe(100)
+    expect(resolveRateLimitThreshold('0', 50)).toBe(0) // 0 = pause only at full exhaustion
+    expect(resolveRateLimitThreshold(undefined, 50)).toBe(50)
+    expect(resolveRateLimitThreshold('nope', 50)).toBe(50)
+    expect(resolveRateLimitThreshold('-5', 50)).toBe(50)
+  })
+  it('pauses when remaining is at or below the threshold', () => {
+    expect(shouldPauseForRateLimit(10, 50)).toBe(true)
+    expect(shouldPauseForRateLimit(50, 50)).toBe(true) // boundary
+    expect(shouldPauseForRateLimit(200, 50)).toBe(false)
+  })
+  it('reads Retry-After seconds into ms, undefined when absent or invalid', () => {
+    expect(retryAfterDelay({ response: { headers: { 'retry-after': '30' } } })).toBe(30000)
+    expect(retryAfterDelay({ response: { headers: {} } })).toBeUndefined()
+    expect(retryAfterDelay(new Error('x'))).toBeUndefined()
+    expect(retryAfterDelay({ response: { headers: { 'retry-after': 'soon' } } })).toBeUndefined()
+  })
+})
+
+describe('proactive rate-limit pause', () => {
+  it('does not pause when remaining is above the threshold', () => {
+    expect(rateLimitPauseMs(200, 50, 2000, 1000)).toBe(0)
+  })
+  it('pauses until the reset instant when remaining is low', () => {
+    // reset at epoch 2000s = 2_000_000ms; now = 1_000_000ms → pause 1_000_000ms
+    expect(rateLimitPauseMs(10, 50, 2000, 1_000_000)).toBe(1_000_000)
+  })
+  it('clamps the pause to 0 when reset is already in the past', () => {
+    expect(rateLimitPauseMs(10, 50, 1000, 2_000_000)).toBe(0)
+  })
+  it('checkRateLimitPause pauses when the client reports low remaining', async () => {
+    const { client, calls } = mockClient({ rateLimit: { remaining: 5, reset: 1000 } })
+    expect(await checkRateLimitPause(client, 50, 0)).toBe(1_000_000) // reset 1000s from epoch 0
+    expect(calls.rateLimit.length).toBe(1)
+  })
+  it('checkRateLimitPause returns 0 when quota is healthy', async () => {
+    const { client } = mockClient({ rateLimit: { remaining: 5000, reset: 1000 } })
+    expect(await checkRateLimitPause(client, 50, 0)).toBe(0)
+  })
+  it('checkRateLimitPause fails open (0) when rate_limit errors', async () => {
+    const { client } = mockClient({ rateLimitThrow: new Error('rate_limit down') })
+    expect(await checkRateLimitPause(client, 50, 0)).toBe(0)
+  })
+})
+
+describe('Retry-After backoff', () => {
+  it('uses plain exponential backoff when no Retry-After is present', () => {
+    expect(nextBackoffDelay(1000, 1)).toBe(2000)
+  })
+  it('honors Retry-After when it exceeds the exponential backoff', () => {
+    expect(nextBackoffDelay(1000, 1, 30000)).toBe(30000)
+  })
+  it('keeps the larger of exponential backoff and Retry-After', () => {
+    expect(nextBackoffDelay(1000, 5, 1000)).toBe(12000) // capped exp (12x) wins over 1s retry-after
+  })
+})
+
 describe('reactions + dedup + meta', () => {
   it('validates reaction names', () => {
     expect(isValidReaction('rocket')).toBe(true)
@@ -248,6 +329,16 @@ describe('state IO round-trip', () => {
   it('persists and reloads cursor', () => {
     saveCursor({ repos: { 'acme/app': { since: '2026-05-29T00:00:00Z' } } })
     expect(loadCursor().repos['acme/app'].since).toBe('2026-05-29T00:00:00Z')
+  })
+  it('persists and reloads the etag alongside since', () => {
+    saveCursor({ repos: { 'acme/app': { since: '2026-05-29T00:00:00Z', etag: 'W/"abc123"' } } })
+    const loaded = loadCursor().repos['acme/app']
+    expect(loaded.since).toBe('2026-05-29T00:00:00Z')
+    expect(loaded.etag).toBe('W/"abc123"')
+  })
+  it('loads a legacy cursor without an etag', () => {
+    saveCursor({ repos: { 'foo/bar': { since: '2026-05-29T00:00:00Z' } } })
+    expect(loadCursor().repos['foo/bar'].etag).toBeUndefined()
   })
 })
 
@@ -366,6 +457,78 @@ describe('pollRepo', () => {
       m => got.push(m),
     )
     expect(got).toEqual([]) // null-author skipped, self-authored skipped
+  })
+
+  const condCtx = {
+    handle: 'mybot',
+    selfLogin: 'mybot',
+    dedup: new Dedup(),
+    access: { mode: 'open' as const, allowedLogins: [], configured: true },
+  }
+  const ref = { owner: 'acme', repo: 'app' }
+
+  it('sends If-None-Match from the cursor and stores the response etag', async () => {
+    const { client, calls } = mockClient({ listCommentsForRepo: [], etag: 'W/"new"' })
+    const cursor = await pollRepo(client, ref, { since: 's', etag: 'W/"old"' }, { ...condCtx, dedup: new Dedup() }, () => {})
+    expect((calls.listRepo[0] as { headers?: { 'if-none-match'?: string } }).headers?.['if-none-match']).toBe('W/"old"')
+    expect(cursor.etag).toBe('W/"new"')
+    expect(cursor.since).toBeTruthy()
+  })
+
+  it('omits If-None-Match on the first poll (no stored etag)', async () => {
+    const { client, calls } = mockClient({ listCommentsForRepo: [], etag: 'W/"first"' })
+    const cursor = await pollRepo(client, ref, {}, { ...condCtx, dedup: new Dedup() }, () => {})
+    expect((calls.listRepo[0] as { headers?: unknown }).headers).toBeUndefined()
+    expect(cursor.etag).toBe('W/"first"')
+  })
+
+  it('treats a 304 as no new items: keeps etag, advances since, emits nothing', async () => {
+    const { client } = mockClient({ listThrow: Object.assign(new Error('Not Modified'), { status: 304 }) })
+    const got: GitHubMessage[] = []
+    const cursor = await pollRepo(client, ref, { since: 'old', etag: 'W/"keep"' }, { ...condCtx, dedup: new Dedup() }, m => got.push(m))
+    expect(got).toEqual([])
+    expect(cursor.etag).toBe('W/"keep"')
+    expect(cursor.since).toBeTruthy()
+    expect(cursor.since).not.toBe('old') // timestamp advanced
+  })
+
+  it('propagates non-304 errors to the caller', async () => {
+    const { client } = mockClient({ listThrow: Object.assign(new Error('boom'), { status: 500 }) })
+    await expect(
+      pollRepo(client, ref, { since: 's' }, { ...condCtx, dedup: new Dedup() }, () => {}),
+    ).rejects.toThrow('boom')
+  })
+
+  it('delivers the same comment set across a 200 → 304 → 200 sequence (SC-5)', async () => {
+    const mk = (id: number, login: string) => ({
+      id,
+      body: '@mybot hi',
+      html_url: `h${id}`,
+      created_at: 't',
+      user: { login, id },
+      issue_url: 'https://api.github.com/repos/acme/app/issues/5',
+    })
+    const ctx = { ...condCtx, dedup: new Dedup() }
+    const got: number[] = []
+    const emit = (m: GitHubMessage): void => void got.push(m.commentId)
+
+    // Poll 1 — 200 with one comment, etag E1.
+    const { client: c1 } = mockClient({ listCommentsForRepo: [mk(1, 'alice')], etag: 'E1' })
+    let cursor = await pollRepo(c1, ref, {}, ctx, emit)
+    expect(cursor.etag).toBe('E1')
+
+    // Poll 2 — 304 Not Modified: nothing new delivered, etag retained.
+    const { client: c2 } = mockClient({ listThrow: Object.assign(new Error('nm'), { status: 304 }) })
+    cursor = await pollRepo(c2, ref, cursor, ctx, emit)
+    expect(cursor.etag).toBe('E1')
+
+    // Poll 3 — 200 with the old comment + a new one, etag E2.
+    const { client: c3 } = mockClient({ listCommentsForRepo: [mk(1, 'alice'), mk(2, 'bob')], etag: 'E2' })
+    cursor = await pollRepo(c3, ref, cursor, ctx, emit)
+    expect(cursor.etag).toBe('E2')
+
+    // Identical to pre-change behavior: id 1 once (dedup), id 2 once, 304 added nothing.
+    expect(got).toEqual([1, 2])
   })
 })
 

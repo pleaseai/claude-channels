@@ -1,0 +1,2 @@
+{"id": "github-channel-plugin-20260529", "type": "feature", "status": "review", "phase": "review", "issue": "#6", "created": "2026-05-29", "section": "completed", "pr": "#7"}
+{"id": "etag-ratelimit-backoff-20260529", "type": "chore", "status": "in_progress", "phase": "implement", "issue": "#11", "created": "2026-05-29", "section": "active"}
