@@ -1,0 +1,16 @@
+{
+  "name": "poc-etag-make-fetch-happen",
+  "type": "module",
+  "private": true,
+  "description": "Spike: does octokit.js + make-fetch-happen give transparent ETag/304 conditional requests on Bun?",
+  "scripts": {
+    "poc": "bun poc.ts"
+  },
+  "dependencies": {
+    "make-fetch-happen": "^14.0.3",
+    "octokit": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}
