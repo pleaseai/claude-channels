@@ -68,6 +68,9 @@
       "Bash(bun run typecheck:*)",
       "Bash(bun run vitest:*)",
       "Bash(bun run:*)",
+      "Bash(bun test:*)",
+      "Bash(turbo check:*)",
+      "Bash(turbo:*)",
       "Bash(claude mcp list:*)",
       "Bash(curl:*)",
       "Bash(docker build:*)",
@@ -121,9 +124,7 @@
       "Skill(please:plan)",
       "Skill(please:implement)"
     ],
-    "deny": [
-      "Bash(bun test:*)"
-    ],
+    "deny": [],
     "ask": []
   },
   "enabledPlugins": {
