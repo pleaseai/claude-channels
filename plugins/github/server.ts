@@ -10,6 +10,8 @@
  * channels use). State lives in ~/.claude/channels/github/.
  */
 
+import { Buffer } from 'node:buffer'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -36,6 +38,8 @@ const RE_LEADING_NEWLINES = /^\n+/
 const RE_COMMENT_IDS = /ids?: ([\d, ]+)/
 // Literal backslash-n escapes in a single-line PEM private key (from .env files).
 const RE_ESCAPED_NEWLINE = /\\n/g
+// A well-formed GitHub X-Hub-Signature-256 header: "sha256=" + 64 hex chars.
+const RE_SHA256_SIGNATURE = /^sha256=[0-9a-f]{64}$/i
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -419,6 +423,176 @@ export function createAppClient(cfg: AppConfig): GitHubClientLike {
       installationId: cfg.installationId,
     },
   }) as unknown as GitHubClientLike
+}
+
+/* ------------------------------------------------------------------ */
+/*  Webhook transport helpers (pure; exported for unit tests)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Verify a GitHub webhook HMAC-SHA256 signature (the `X-Hub-Signature-256`
+ * header) against the shared secret and the exact raw request body. Returns
+ * false — never throws — for a missing/malformed header or a length mismatch, so
+ * a forged or unsigned payload is simply rejected. Uses a constant-time compare
+ * to avoid leaking the expected digest via timing.
+ */
+export function verifyWebhookSignature(
+  secret: string,
+  signatureHeader: string | undefined | null,
+  rawBody: string | Buffer,
+): boolean {
+  if (!secret || !signatureHeader || !RE_SHA256_SIGNATURE.test(signatureHeader))
+    return false
+  const expected = `sha256=${createHmac('sha256', secret).update(rawBody).digest('hex')}`
+  const got = Buffer.from(signatureHeader)
+  const want = Buffer.from(expected)
+  // timingSafeEqual throws on length mismatch — guard first (also a fast reject).
+  return got.length === want.length && timingSafeEqual(got, want)
+}
+
+// Minimal structural subset of a GitHub `issue_comment` webhook payload — only
+// the fields the mapper reads. Mirrors the RawComment approach (avoid pulling a
+// full @octokit/webhooks-types dependency in for a single event shape).
+export interface IssueCommentEvent {
+  action?: string
+  comment?: {
+    id?: number
+    body?: string
+    html_url?: string
+    created_at?: string
+    user?: { login?: string, id?: number } | null
+  } | null
+  issue?: {
+    number?: number
+    // Present (non-null) only when the comment is on a pull request.
+    pull_request?: unknown
+  } | null
+  repository?: { full_name?: string } | null
+}
+
+/**
+ * Map an `issue_comment` webhook payload to a GitHubMessage, or null when the
+ * event is not a newly-created comment or is missing required fields. Produces
+ * the same shape the poll path emits, so downstream gating/dedup/emit and the
+ * resulting <channel> event are identical across transports. A `pull_request`
+ * field on the issue marks the comment as a PR-conversation comment.
+ */
+export function messageFromIssueCommentEvent(event: IssueCommentEvent): GitHubMessage | null {
+  if (event.action !== 'created')
+    return null
+  const c = event.comment
+  const issue = event.issue
+  const repo = event.repository?.full_name
+  const login = c?.user?.login
+  if (!c?.id || !c.html_url || !c.created_at || !issue?.number || !repo || !login)
+    return null
+  return {
+    repo,
+    issueNumber: issue.number,
+    commentId: c.id,
+    user: login,
+    userId: c.user?.id ?? 0,
+    body: c.body ?? '',
+    htmlUrl: c.html_url,
+    createdAt: c.created_at,
+    commentType: issue.pull_request ? 'pr' : 'issue',
+  }
+}
+
+/** Default path the webhook receiver listens on (and registers with GitHub). */
+export const WEBHOOK_PATH = '/webhook'
+
+// Everything the webhook pipeline needs, injected so it can be unit-tested
+// without binding a port or reading the real filesystem. `loadAccess` is a
+// thunk so the allowlist is re-read per delivery (matching the poll loop, which
+// calls loadAccess() each tick).
+export interface WebhookContext {
+  secret: string
+  watched: RepoRef[]
+  handle: string
+  selfLogin: string
+  dedup: Dedup
+  loadAccess: () => AccessState
+  emit: (msg: GitHubMessage) => void
+  path?: string
+}
+
+/**
+ * Run a single issue_comment payload through the SAME inbound filters as the
+ * poll loop — dedup, self-author, mention match, watched-repo gate, sender
+ * allowlist — emitting only when all pass. Returns the emitted message (or null
+ * when filtered) for testability. Filter order mirrors pollRepo so the two
+ * transports deliver identically.
+ */
+export function processIssueCommentEvent(payload: IssueCommentEvent, ctx: WebhookContext): GitHubMessage | null {
+  const msg = messageFromIssueCommentEvent(payload)
+  if (!msg)
+    return null
+  if (!ctx.dedup.check(msg.commentId))
+    return null
+  if (msg.user === ctx.selfLogin)
+    return null
+  if (!mentionsHandle(msg.body, ctx.handle))
+    return null
+  const [owner, repo] = splitRepo(msg.repo)
+  if (!isWatchedRepo(ctx.watched, owner, repo))
+    return null
+  if (!isAllowed(ctx.loadAccess(), msg.user))
+    return null
+  ctx.emit(msg)
+  return msg
+}
+
+/**
+ * Fetch handler for the webhook receiver (exported so it can be unit-tested with
+ * constructed Request objects, no port binding). Rejects wrong path/method and
+ * bad/forged signatures; acknowledges every correctly-signed delivery with 200
+ * (even ignored event types) so GitHub does not retry. The raw body is read once
+ * and used for BOTH signature verification and parsing — re-serializing JSON
+ * would change the bytes and break the HMAC.
+ */
+export async function handleWebhookRequest(req: Request, ctx: WebhookContext): Promise<Response> {
+  const path = ctx.path ?? WEBHOOK_PATH
+  if (new URL(req.url).pathname !== path)
+    return new Response('not found', { status: 404 })
+  if (req.method !== 'POST')
+    return new Response('method not allowed', { status: 405 })
+
+  const raw = await req.text()
+  if (!verifyWebhookSignature(ctx.secret, req.headers.get('x-hub-signature-256'), raw))
+    return new Response('invalid signature', { status: 401 })
+
+  // Only issue_comment is in scope (parity with polling); acknowledge anything
+  // else (ping, etc.) so GitHub marks the delivery successful.
+  if (req.headers.get('x-github-event') === 'issue_comment') {
+    let payload: IssueCommentEvent
+    try {
+      payload = JSON.parse(raw) as IssueCommentEvent
+    }
+    catch {
+      return new Response('invalid json', { status: 400 })
+    }
+    processIssueCommentEvent(payload, ctx)
+  }
+  return new Response('ok', { status: 200 })
+}
+
+// Handle to a running webhook receiver.
+export interface WebhookServerHandle {
+  port: number
+  stop: () => void
+}
+
+/**
+ * Bind the webhook receiver to `port` (0 = an ephemeral free port). Thin wrapper
+ * over Bun.serve; all request logic lives in handleWebhookRequest.
+ */
+export function startWebhookServer(ctx: WebhookContext, port: number): WebhookServerHandle {
+  const server = Bun.serve({
+    port,
+    fetch: (req: Request) => handleWebhookRequest(req, ctx),
+  })
+  return { port: server.port ?? port, stop: () => server.stop(true) }
 }
 
 /**

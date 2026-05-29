@@ -1,8 +1,8 @@
-import type { Buffer } from 'node:buffer'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { GitHubClientLike, GitHubMessage } from './server'
+import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHmac, generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,6 +38,12 @@ const {
   resolveTransport,
   loadAppConfig,
   createAppClient,
+  verifyWebhookSignature,
+  messageFromIssueCommentEvent,
+  processIssueCommentEvent,
+  handleWebhookRequest,
+  startWebhookServer,
+  WEBHOOK_PATH,
   seedCursor,
   rememberPostedIds,
   Dedup,
@@ -289,6 +295,205 @@ describe('createAppClient', () => {
   })
   it('does not throw at construction for a well-formed config', () => {
     expect(() => createAppClient(cfg)).not.toThrow()
+  })
+})
+
+describe('verifyWebhookSignature', () => {
+  const secret = 'topsecret'
+  const sign = (body: string): string => `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+
+  it('accepts a signature computed from the same secret + body', () => {
+    const body = '{"action":"created"}'
+    expect(verifyWebhookSignature(secret, sign(body), body)).toBe(true)
+  })
+  it('verifies raw bytes, including unicode and newlines', () => {
+    const body = '{"body":"héllo\nwörld 🚀"}'
+    expect(verifyWebhookSignature(secret, sign(body), Buffer.from(body))).toBe(true)
+  })
+  it('rejects a wrong secret', () => {
+    const body = '{"action":"created"}'
+    const forged = `sha256=${createHmac('sha256', 'other').update(body).digest('hex')}`
+    expect(verifyWebhookSignature(secret, forged, body)).toBe(false)
+  })
+  it('rejects a tampered body', () => {
+    expect(verifyWebhookSignature(secret, sign('{"a":1}'), '{"a":2}')).toBe(false)
+  })
+  it('rejects missing / malformed / wrong-length headers without throwing', () => {
+    const body = 'x'
+    expect(verifyWebhookSignature(secret, undefined, body)).toBe(false)
+    expect(verifyWebhookSignature(secret, null, body)).toBe(false)
+    expect(verifyWebhookSignature(secret, '', body)).toBe(false)
+    expect(verifyWebhookSignature(secret, 'sha1=deadbeef', body)).toBe(false)
+    expect(verifyWebhookSignature(secret, 'sha256=tooshort', body)).toBe(false)
+    expect(verifyWebhookSignature('', sign(body), body)).toBe(false) // no secret
+  })
+})
+
+describe('messageFromIssueCommentEvent', () => {
+  const base = {
+    action: 'created',
+    comment: { id: 99, body: 'hi @bot', html_url: 'https://gh/c/99', created_at: '2026-05-30T00:00:00Z', user: { login: 'alice', id: 7 } },
+    issue: { number: 42 },
+    repository: { full_name: 'acme/app' },
+  }
+  it('maps a created issue comment', () => {
+    const msg = messageFromIssueCommentEvent(base)
+    expect(msg).toEqual({
+      repo: 'acme/app',
+      issueNumber: 42,
+      commentId: 99,
+      user: 'alice',
+      userId: 7,
+      body: 'hi @bot',
+      htmlUrl: 'https://gh/c/99',
+      createdAt: '2026-05-30T00:00:00Z',
+      commentType: 'issue',
+    })
+  })
+  it('marks a PR-conversation comment as commentType pr', () => {
+    const msg = messageFromIssueCommentEvent({ ...base, issue: { number: 42, pull_request: { url: 'https://gh/pulls/42' } } })
+    expect(msg?.commentType).toBe('pr')
+  })
+  it('defaults userId to 0 when absent (parity with poll)', () => {
+    const msg = messageFromIssueCommentEvent({ ...base, comment: { ...base.comment, user: { login: 'alice' } } })
+    expect(msg?.userId).toBe(0)
+  })
+  it('returns null for non-created actions', () => {
+    expect(messageFromIssueCommentEvent({ ...base, action: 'edited' })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, action: 'deleted' })).toBeNull()
+  })
+  it('returns null when required fields are missing', () => {
+    expect(messageFromIssueCommentEvent({ action: 'created' })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, comment: { ...base.comment, user: null } })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, repository: null })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, issue: null })).toBeNull()
+  })
+})
+
+describe('webhook receiver', () => {
+  const SECRET = 'whsecret'
+  const OPEN_ACCESS = { mode: 'open' as const, allowedLogins: [], configured: true }
+
+  function makeCtx(overrides: Partial<Record<string, unknown>> = {}): { ctx: any, emitted: GitHubMessage[] } {
+    const emitted: GitHubMessage[] = []
+    const ctx = {
+      secret: SECRET,
+      watched: WATCHED,
+      handle: 'bot',
+      selfLogin: 'mybot',
+      dedup: new Dedup(),
+      loadAccess: () => OPEN_ACCESS,
+      emit: (m: GitHubMessage) => emitted.push(m),
+      ...overrides,
+    }
+    return { ctx, emitted }
+  }
+
+  const commentEvent = (over: Record<string, unknown> = {}): string => JSON.stringify({
+    action: 'created',
+    comment: { id: 555, body: 'please @bot help', html_url: 'https://gh/c/555', created_at: '2026-05-30T01:00:00Z', user: { login: 'alice', id: 3 } },
+    issue: { number: 42 },
+    repository: { full_name: 'acme/app' },
+    ...over,
+  })
+
+  function signedRequest(body: string, opts: { event?: string, sign?: boolean, method?: string, path?: string } = {}): Request {
+    const { event = 'issue_comment', sign = true, method = 'POST', path = WEBHOOK_PATH } = opts
+    const headers: Record<string, string> = { 'x-github-event': event }
+    if (sign)
+      headers['x-hub-signature-256'] = `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`
+    return new Request(`http://localhost${path}`, { method, headers, body: method === 'GET' ? undefined : body })
+  }
+
+  it('emits a mentioning, allowlisted, non-self comment and returns 200', async () => {
+    const { ctx, emitted } = makeCtx()
+    const res = await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    expect(res.status).toBe(200)
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].commentId).toBe(555)
+    expect(emitted[0].user).toBe('alice')
+  })
+
+  it('produces the same channel meta a polled comment would (AC-6)', async () => {
+    const { ctx, emitted } = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    const meta = buildChannelMeta(emitted[0])
+    expect(meta).toMatchObject({
+      chat_id: 'acme/app#42',
+      message_id: '555',
+      user: 'alice',
+      repo: 'acme/app',
+      issue_number: '42',
+      comment_type: 'issue',
+    })
+  })
+
+  it('dedupes redelivery of the same comment id', async () => {
+    const { ctx, emitted } = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    expect(emitted).toHaveLength(1)
+  })
+
+  it('ignores (200, no emit) comments without the mention, from self, unwatched repo, or non-allowlisted sender', async () => {
+    const noMention = makeCtx()
+    expect((await handleWebhookRequest(signedRequest(commentEvent({ comment: { id: 1, body: 'no ping', html_url: 'h', created_at: 't', user: { login: 'alice', id: 1 } } })), noMention.ctx)).status).toBe(200)
+    expect(noMention.emitted).toHaveLength(0)
+
+    const fromSelf = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent({ comment: { id: 2, body: '@bot hi', html_url: 'h', created_at: 't', user: { login: 'mybot', id: 9 } } })), fromSelf.ctx)
+    expect(fromSelf.emitted).toHaveLength(0)
+
+    const unwatched = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent({ repository: { full_name: 'other/repo' } })), unwatched.ctx)
+    expect(unwatched.emitted).toHaveLength(0)
+
+    const denied = makeCtx({ loadAccess: () => ({ mode: 'allowlist' as const, allowedLogins: ['bob'], configured: true }) })
+    await handleWebhookRequest(signedRequest(commentEvent()), denied.ctx)
+    expect(denied.emitted).toHaveLength(0)
+  })
+
+  it('acknowledges non-issue_comment events (e.g. ping) with 200 and no emit', async () => {
+    const { ctx, emitted } = makeCtx()
+    const res = await handleWebhookRequest(signedRequest(JSON.stringify({ zen: 'hi' }), { event: 'ping' }), ctx)
+    expect(res.status).toBe(200)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('rejects a forged/unsigned payload with 401 and never emits', async () => {
+    const { ctx, emitted } = makeCtx()
+    const unsigned = await handleWebhookRequest(signedRequest(commentEvent(), { sign: false }), ctx)
+    expect(unsigned.status).toBe(401)
+    const body = commentEvent()
+    const forged = new Request(`http://localhost${WEBHOOK_PATH}`, { method: 'POST', headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': 'sha256=deadbeef' }, body })
+    expect((await handleWebhookRequest(forged, ctx)).status).toBe(401)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('returns 404 for a wrong path and 405 for a wrong method', async () => {
+    const { ctx } = makeCtx()
+    expect((await handleWebhookRequest(signedRequest(commentEvent(), { path: '/nope' }), ctx)).status).toBe(404)
+    expect((await handleWebhookRequest(signedRequest(commentEvent(), { method: 'GET' }), ctx)).status).toBe(405)
+  })
+
+  it('returns 400 for a correctly-signed issue_comment with invalid JSON', async () => {
+    const { ctx } = makeCtx()
+    const res = await handleWebhookRequest(signedRequest('{not json'), ctx)
+    expect(res.status).toBe(400)
+  })
+
+  it('processIssueCommentEvent returns the emitted message or null', () => {
+    const { ctx } = makeCtx()
+    const msg = processIssueCommentEvent(JSON.parse(commentEvent()), ctx)
+    expect(msg?.commentId).toBe(555)
+    expect(processIssueCommentEvent({ action: 'edited' }, ctx)).toBeNull()
+  })
+
+  it('startWebhookServer binds an ephemeral port and stops cleanly', () => {
+    const { ctx } = makeCtx()
+    const handle = startWebhookServer(ctx, 0)
+    expect(handle.port).toBeGreaterThan(0)
+    expect(() => handle.stop()).not.toThrow()
   })
 })
 
