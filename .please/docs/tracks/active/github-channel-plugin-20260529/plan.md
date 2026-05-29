@@ -166,3 +166,11 @@ _(updated during /please:implement)_
 - Polling (not webhooks) — local subprocess has no public URL. `since`-cursor + comment-id dedup; ETag deferred to avoid Octokit 304 fragility.
 - PR review comments (diff-line) deferred — inbound covers issue + PR conversation comments (`issues.listCommentsForRepo`), tagged `comment_type` issue|pr. Follow-up: add `pulls.listReviewCommentsForRepo`.
 - Repo labels `type/feature`/`status/draft` do not exist in this repo; Issue #6 created without labels.
+
+## Review
+
+- [x] (2026-05-29 KST) Quality review complete (SHA: `7f3c20e`)
+  - Spec compliance: 6/8 FR fully implemented, 2 PARTIAL reconciled by aligning types with documented scope (dropped unused `RepoCursor.etag`, never-emitted `pr_review`).
+  - Code review: no quality issues; all CLAUDE.md invariants (sender/outbound gating, atomic writes, stderr-only, prompt-injection posture) verified.
+  - Fixes applied: refuse-to-poll on unresolved identity (self-loop/PAT-exhaustion guard); surface access.json/cursor.json corruption on stderr; +4 negative-path tests for outbound gating and null/self author filtering.
+  - Final: 45 tests pass, lint clean, tsc clean (github), coverage 95% funcs / 81% lines.
