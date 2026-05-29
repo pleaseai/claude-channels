@@ -3,6 +3,7 @@ import type { GitHubClientLike, GitHubMessage } from './server'
 import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
 import { createHmac, generateKeyPairSync } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +45,11 @@ const {
   handleWebhookRequest,
   startWebhookServer,
   WEBHOOK_PATH,
+  parseTunnelUrl,
+  cloudflaredArgs,
+  startTunnel,
+  webhookDeliveryUrl,
+  registerWebhookUrl,
   seedCursor,
   rememberPostedIds,
   Dedup,
@@ -494,6 +500,121 @@ describe('webhook receiver', () => {
     const handle = startWebhookServer(ctx, 0)
     expect(handle.port).toBeGreaterThan(0)
     expect(() => handle.stop()).not.toThrow()
+  })
+})
+
+describe('parseTunnelUrl', () => {
+  it('extracts a trycloudflare URL from a log line', () => {
+    expect(parseTunnelUrl('2026-05-30 INF |  https://red-sky-1234.trycloudflare.com  |')).toBe('https://red-sky-1234.trycloudflare.com')
+  })
+  it('finds the URL mid-line among other text', () => {
+    expect(parseTunnelUrl('Your quick Tunnel: https://abc-def.trycloudflare.com (expires soon)')).toBe('https://abc-def.trycloudflare.com')
+  })
+  it('returns null when no URL is present', () => {
+    expect(parseTunnelUrl('INF Starting tunnel')).toBeNull()
+    expect(parseTunnelUrl('https://example.com/not-cloudflare')).toBeNull()
+  })
+})
+
+describe('cloudflaredArgs', () => {
+  it('builds quick-tunnel args', () => {
+    expect(cloudflaredArgs({ mode: 'quick', localPort: 8123 })).toEqual(['tunnel', '--url', 'http://localhost:8123'])
+  })
+  it('builds named-tunnel args with run <name>', () => {
+    expect(cloudflaredArgs({ mode: 'named', localPort: 8123, name: 'mytun', hostname: 'gh.example.com' }))
+      .toEqual(['tunnel', '--url', 'http://localhost:8123', 'run', 'mytun'])
+  })
+})
+
+describe('startTunnel', () => {
+  function fakeChild(): any {
+    const child: any = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.kill = () => {
+      child.killed = true
+      return true
+    }
+    return child
+  }
+
+  it('resolves with the parsed URL for a quick tunnel', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child })
+    child.stderr.emit('data', Buffer.from('INF |  https://wind-tree-77.trycloudflare.com  |\n'))
+    const handle = await p
+    expect(handle.url).toBe('https://wind-tree-77.trycloudflare.com')
+    handle.stop()
+    expect(child.killed).toBe(true)
+  })
+
+  it('resolves with the configured hostname when a named tunnel registers', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'named', localPort: 9001, name: 't', hostname: 'gh.example.com' }, { spawn: () => child })
+    child.stderr.emit('data', Buffer.from('INF Registered tunnel connection connIndex=0\n'))
+    const handle = await p
+    expect(handle.url).toBe('https://gh.example.com')
+  })
+
+  it('rejects when the named config is incomplete', async () => {
+    await expect(startTunnel({ mode: 'named', localPort: 9001 })).rejects.toThrow(/named tunnel requires/)
+  })
+
+  it('rejects if cloudflared exits before becoming ready', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child })
+    child.emit('exit', 1)
+    await expect(p).rejects.toThrow(/exited before the tunnel was ready/)
+  })
+
+  it('rejects on a readiness timeout', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child, readyTimeoutMs: 15 })
+    await expect(p).rejects.toThrow(/did not become ready/)
+    expect(child.killed).toBe(true)
+  })
+})
+
+describe('webhookDeliveryUrl', () => {
+  it('joins base + path, trimming trailing slashes', () => {
+    expect(webhookDeliveryUrl('https://x.trycloudflare.com')).toBe('https://x.trycloudflare.com/webhook')
+    expect(webhookDeliveryUrl('https://x.trycloudflare.com/')).toBe('https://x.trycloudflare.com/webhook')
+    expect(webhookDeliveryUrl('https://gh.example.com', '/gh')).toBe('https://gh.example.com/gh')
+  })
+})
+
+describe('registerWebhookUrl', () => {
+  function appClient(impl?: (p: unknown) => Promise<unknown>): { client: any, calls: unknown[] } {
+    const calls: unknown[] = []
+    const client = {
+      rest: { apps: { updateWebhookConfigForApp: async (p: unknown) => {
+        calls.push(p)
+        return impl ? impl(p) : {}
+      } } },
+    }
+    return { client, calls }
+  }
+
+  it('updates the App webhook config with the delivery URL + secret', async () => {
+    const { client, calls } = appClient()
+    const url = await registerWebhookUrl(client, 'https://x.trycloudflare.com', 's3cr3t')
+    expect(url).toBe('https://x.trycloudflare.com/webhook')
+    expect(calls[0]).toEqual({ url: 'https://x.trycloudflare.com/webhook', secret: 's3cr3t', content_type: 'json' })
+  })
+
+  it('is idempotent across repeated registrations', async () => {
+    const { client, calls } = appClient()
+    await registerWebhookUrl(client, 'https://x.trycloudflare.com', 's')
+    await registerWebhookUrl(client, 'https://x.trycloudflare.com', 's')
+    expect(calls).toHaveLength(2)
+  })
+
+  it('wraps API failures in a clear error without leaking the secret', async () => {
+    const { client } = appClient(() => Promise.reject(new Error('403 Forbidden')))
+    const err = await registerWebhookUrl(client, 'https://x.trycloudflare.com', 'supersecret').catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/failed to register webhook URL/)
+    expect((err as Error).message).not.toContain('supersecret')
   })
 })
 

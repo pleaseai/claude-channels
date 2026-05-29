@@ -10,7 +10,9 @@
  * channels use). State lives in ~/.claude/channels/github/.
  */
 
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Buffer } from 'node:buffer'
+import { spawn } from 'node:child_process'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -40,6 +42,12 @@ const RE_COMMENT_IDS = /ids?: ([\d, ]+)/
 const RE_ESCAPED_NEWLINE = /\\n/g
 // A well-formed GitHub X-Hub-Signature-256 header: "sha256=" + 64 hex chars.
 const RE_SHA256_SIGNATURE = /^sha256=[0-9a-f]{64}$/i
+// A TryCloudflare quick-tunnel URL, as printed in cloudflared's startup log.
+const RE_TRYCLOUDFLARE_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i
+// cloudflared "tunnel is up" signal for a named tunnel (no URL is printed).
+const RE_TUNNEL_READY = /Registered tunnel connection|Connection \S+ registered/i
+// Trailing slash(es) on a base URL, trimmed before appending the webhook path.
+const RE_TRAILING_SLASH = /\/+$/
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -593,6 +601,159 @@ export function startWebhookServer(ctx: WebhookContext, port: number): WebhookSe
     fetch: (req: Request) => handleWebhookRequest(req, ctx),
   })
   return { port: server.port ?? port, stop: () => server.stop(true) }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Cloudflare tunnel (cloudflared subprocess)                         */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_TUNNEL_READY_TIMEOUT_MS = 30000
+
+export type TunnelMode = 'quick' | 'named'
+
+export interface TunnelConfig {
+  mode: TunnelMode
+  localPort: number
+  // named-tunnel only:
+  name?: string // cloudflared tunnel name/UUID to `run`
+  hostname?: string // the public hostname mapped to the tunnel (the resulting URL)
+}
+
+export interface TunnelHandle {
+  url: string
+  stop: () => void
+}
+
+export interface TunnelDeps {
+  // Injectable for tests; defaults to node:child_process spawn.
+  spawn?: (cmd: string, args: string[]) => ChildProcessWithoutNullStreams
+  readyTimeoutMs?: number
+}
+
+/**
+ * Extract a TryCloudflare quick-tunnel URL (`https://<sub>.trycloudflare.com`)
+ * from a single cloudflared log line, or null if the line has none. Named
+ * tunnels do not print a URL — their public hostname comes from config — so this
+ * is only used in quick mode.
+ */
+export function parseTunnelUrl(line: string): string | null {
+  const m = RE_TRYCLOUDFLARE_URL.exec(line)
+  return m ? m[0] : null
+}
+
+/**
+ * Build the cloudflared argv for a tunnel config. Quick tunnels are ephemeral
+ * and print a `*.trycloudflare.com` URL; named tunnels route a preconfigured
+ * tunnel (stable hostname via DNS) to the local receiver.
+ */
+export function cloudflaredArgs(cfg: TunnelConfig): string[] {
+  const base = ['tunnel', '--url', `http://localhost:${cfg.localPort}`]
+  return cfg.mode === 'named' ? [...base, 'run', cfg.name as string] : base
+}
+
+/**
+ * Spawn cloudflared and resolve once the tunnel is ready: for a quick tunnel,
+ * when the `*.trycloudflare.com` URL is parsed from its log; for a named tunnel,
+ * when a connection-registered line appears (the URL is the configured
+ * hostname). Rejects if the process exits before becoming ready or the readiness
+ * timeout elapses — so webhook startup fails loudly rather than silently never
+ * receiving deliveries. The returned handle's `stop()` terminates the process.
+ */
+export function startTunnel(cfg: TunnelConfig, deps: TunnelDeps = {}): Promise<TunnelHandle> {
+  if (cfg.mode === 'named' && (!cfg.name || !cfg.hostname))
+    return Promise.reject(new Error('named tunnel requires both a tunnel name and a public hostname'))
+
+  const spawnFn = deps.spawn ?? ((cmd, args) => spawn(cmd, args))
+  const timeoutMs = deps.readyTimeoutMs ?? DEFAULT_TUNNEL_READY_TIMEOUT_MS
+
+  return new Promise<TunnelHandle>((resolve, reject) => {
+    const child = spawnFn('cloudflared', cloudflaredArgs(cfg))
+    let settled = false
+    let timer: ReturnType<typeof setTimeout>
+    const stop = (): void => {
+      try {
+        child.kill('SIGTERM')
+      }
+      catch {
+        // process already gone — nothing to clean up.
+      }
+    }
+    const finish = (fn: () => void): void => {
+      if (settled)
+        return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
+    const onLine = (line: string): void => {
+      if (cfg.mode === 'quick') {
+        const url = parseTunnelUrl(line)
+        if (url)
+          finish(() => resolve({ url, stop }))
+      }
+      else if (RE_TUNNEL_READY.test(line)) {
+        finish(() => resolve({ url: `https://${cfg.hostname}`, stop }))
+      }
+    }
+    const onData = (buf: unknown): void => {
+      for (const line of String(buf).split('\n')) {
+        if (line.trim())
+          onLine(line)
+      }
+    }
+    // cloudflared logs to stderr; read stdout too for robustness.
+    child.stdout?.on('data', onData)
+    child.stderr?.on('data', onData)
+    child.on('error', err => finish(() => reject(err)))
+    child.on('exit', code => finish(() => reject(new Error(`cloudflared exited before the tunnel was ready (code ${code})`))))
+    timer = setTimeout(() => {
+      finish(() => {
+        stop()
+        reject(new Error(`cloudflared: tunnel did not become ready within ${timeoutMs}ms`))
+      })
+    }, timeoutMs)
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/*  Webhook URL registration (App-level: PATCH /app/hook/config)       */
+/* ------------------------------------------------------------------ */
+
+// Minimal subset of the App-authenticated client used to update the App's own
+// webhook config. `@octokit/auth-app` signs this `/app/*` route with the JWT.
+export interface AppWebhookClientLike {
+  rest: {
+    apps: {
+      updateWebhookConfigForApp: (p: { url: string, secret?: string, content_type?: string }) => Promise<unknown>
+    }
+  }
+}
+
+/** Join a tunnel base URL and the webhook path into the full delivery URL. */
+export function webhookDeliveryUrl(baseUrl: string, path: string = WEBHOOK_PATH): string {
+  return `${baseUrl.replace(RE_TRAILING_SLASH, '')}${path}`
+}
+
+/**
+ * Point the GitHub App's webhook at the current tunnel URL (+ secret) via
+ * `PATCH /app/hook/config`. Idempotent — re-registering the same URL is a no-op
+ * on GitHub's side. Returns the registered delivery URL. Errors are wrapped with
+ * an actionable message; the secret is never included in the message.
+ */
+export async function registerWebhookUrl(
+  client: AppWebhookClientLike,
+  baseUrl: string,
+  secret: string,
+  path: string = WEBHOOK_PATH,
+): Promise<string> {
+  const url = webhookDeliveryUrl(baseUrl, path)
+  try {
+    await client.rest.apps.updateWebhookConfigForApp({ url, secret, content_type: 'json' })
+  }
+  catch (err) {
+    throw new Error(`failed to register webhook URL ${url} with the GitHub App: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  return url
 }
 
 /**
