@@ -11,5 +11,5 @@ Key architectural facts:
 - Pure functions: chunk(), dedup(), safeFileName(), isInBoundThread() — all reimplemented in test file
 - assertInBoundThread() calls web.conversations.replies — untestable without mocks
 - boundThreadTs is module-scope mutable state (let), not exported
-- dedup() in server.ts closes over module-scope recentInboundTs Set; test reimplementation takes a Set parameter (different API)
+- dedup() in server.ts closes over module-scope recentInboundTs Set; test reimplementation (makeDedup) takes a `cap: number` parameter and creates the Set internally (different API)
 - assertSendable() uses realpathSync/statSync for path traversal security — not covered in tests
