@@ -159,7 +159,8 @@
     "tsdown@pleaseai": true,
     "vueuse@pleaseai": true,
     "gatekeeper@pleaseai": true,
-    "ast-grep@pleaseai": true
+    "ast-grep@pleaseai": true,
+    "modern-web-guidance@pleaseai": true
   },
   "extraKnownMarketplaces": {
     "passionfactory": {
@@ -194,6 +195,9 @@
   "language": "english",
   "channelsEnabled": true,
   "allowedChannelPlugins": [
-    { "marketplace": "claude-channels", "plugin": "slack" }
+    {
+      "marketplace": "claude-channels",
+      "plugin": "slack"
+    }
   ]
 }
