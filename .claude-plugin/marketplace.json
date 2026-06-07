@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "slack",
-      "description": "Slack messaging bridge for Claude Code with built-in access control. Receive messages from Slack, reply in threads, react with emoji, and edit messages — all gated by sender identity and channel allowlists.",
+      "description": "Slack messaging bridge for Claude Code. Receive messages from Slack, reply in threads, react with emoji, and edit messages — all scoped to a dedicated session thread.",
       "author": {
         "name": "Minsu Lee"
       },
