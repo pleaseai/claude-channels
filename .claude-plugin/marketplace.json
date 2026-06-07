@@ -1,0 +1,27 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-channels",
+  "description": "MCP channel plugins bridging chat platforms (Slack, Line, etc.) with Claude Code sessions",
+  "owner": {
+    "name": "Minsu Lee",
+    "email": "amondnet@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "slack",
+      "description": "Slack messaging bridge for Claude Code. Receive messages from Slack, reply in threads, react with emoji, and edit messages — all scoped to a dedicated session thread.",
+      "author": {
+        "name": "Minsu Lee"
+      },
+      "category": "productivity",
+      "source": "./plugins/slack",
+      "homepage": "https://github.com/pleaseai/claude-channels",
+      "keywords": [
+        "slack",
+        "messaging",
+        "channel",
+        "mcp"
+      ]
+    }
+  ]
+}
