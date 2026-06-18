@@ -1,0 +1,93 @@
+{
+  "generated_by": "/please:sync-specs",
+  "specs": [
+    {
+      "id": "SPEC-001",
+      "domain": "plugins",
+      "feature": "github",
+      "created_at": "2026-05-29T20:28:07.728Z",
+      "updated_at": "2026-05-29T20:28:07.728Z",
+      "source_tracks": [
+        "github-app-webhook-20260530"
+      ],
+      "traces": [],
+      "requirements": [
+        {
+          "id": "REQ-001",
+          "kind": "functional",
+          "statement": "**Transport selection.** A config/env switch (e.g."
+        },
+        {
+          "id": "REQ-002",
+          "kind": "functional",
+          "statement": "**GitHub App authentication.** In webhook mode, authenticate as a"
+        },
+        {
+          "id": "REQ-003",
+          "kind": "functional",
+          "statement": "**Manual App provisioning.** The user creates the GitHub App in the"
+        },
+        {
+          "id": "REQ-004",
+          "kind": "functional",
+          "statement": "**Local webhook receiver.** Run a local HTTP server that accepts"
+        },
+        {
+          "id": "REQ-005",
+          "kind": "functional",
+          "statement": "**Signature verification.** Every inbound request is verified against"
+        },
+        {
+          "id": "REQ-006",
+          "kind": "functional",
+          "statement": "**Event handling — `issue_comment`.** Handle `issue_comment` events"
+        },
+        {
+          "id": "REQ-007",
+          "kind": "functional",
+          "statement": "**Cloudflare tunnel — quick (default).** Spawn `cloudflared` to create"
+        },
+        {
+          "id": "REQ-008",
+          "kind": "functional",
+          "statement": "**Cloudflare tunnel — named (configurable).** When named-tunnel config"
+        },
+        {
+          "id": "REQ-009",
+          "kind": "functional",
+          "statement": "**Webhook URL auto-registration.** On startup, after the tunnel URL is"
+        },
+        {
+          "id": "REQ-010",
+          "kind": "functional",
+          "statement": "**Tunnel lifecycle management.** The `cloudflared` subprocess is"
+        },
+        {
+          "id": "REQ-011",
+          "kind": "functional",
+          "statement": "**Outbound parity.** `reply`, `react`, `edit_message`, and"
+        },
+        {
+          "id": "REQ-012",
+          "kind": "non-functional",
+          "statement": "**Non-breaking.** With `CLAUDE_GITHUB_TRANSPORT` unset, behavior is"
+        },
+        {
+          "id": "REQ-013",
+          "kind": "non-functional",
+          "statement": "**Security invariants preserved.** Sender gating on commenter login,"
+        },
+        {
+          "id": "REQ-014",
+          "kind": "non-functional",
+          "statement": "**Testability.** Transport selection, signature verification, event→"
+        },
+        {
+          "id": "REQ-015",
+          "kind": "non-functional",
+          "statement": "**Single-file convention.** Implementation stays within the plugin's"
+        }
+      ]
+    }
+  ]
+}

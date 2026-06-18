@@ -1,7 +1,9 @@
-import type { Buffer } from 'node:buffer'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { GitHubClientLike, GitHubMessage } from './server'
+import { Buffer } from 'node:buffer'
 import { spawn } from 'node:child_process'
+import { createHmac, generateKeyPairSync } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,6 +36,22 @@ const {
   checkRateLimitPause,
   nextBackoffDelay,
   resolveHandle,
+  resolveTransport,
+  resolveWebhookSelfLogin,
+  loadAppConfig,
+  createAppClient,
+  verifyWebhookSignature,
+  messageFromIssueCommentEvent,
+  processIssueCommentEvent,
+  handleWebhookRequest,
+  startWebhookServer,
+  WEBHOOK_PATH,
+  parseTunnelUrl,
+  cloudflaredArgs,
+  startTunnel,
+  webhookDeliveryUrl,
+  registerWebhookUrl,
+  startWebhookTransport,
   seedCursor,
   rememberPostedIds,
   Dedup,
@@ -215,6 +233,516 @@ describe('config + backoff helpers', () => {
     seedCursor(cursor, [{ owner: 'acme', repo: 'app' }, { owner: 'foo', repo: 'bar' }], 'now')
     expect(cursor.repos['acme/app'].since).toBe('old') // preserved
     expect(cursor.repos['foo/bar'].since).toBe('now') // seeded
+  })
+})
+
+describe('resolveTransport', () => {
+  it('selects webhook only for the literal value (case-insensitive)', () => {
+    expect(resolveTransport('webhook')).toBe('webhook')
+    expect(resolveTransport('WebHook')).toBe('webhook')
+    expect(resolveTransport('  webhook  ')).toBe('webhook')
+  })
+  it('defaults to poll when unset', () => {
+    expect(resolveTransport(undefined)).toBe('poll')
+    expect(resolveTransport('')).toBe('poll')
+    expect(resolveTransport('poll')).toBe('poll')
+  })
+  it('falls back to poll for unrecognized values', () => {
+    expect(resolveTransport('socket')).toBe('poll')
+    expect(resolveTransport('webhooks')).toBe('poll')
+  })
+})
+
+describe('resolveWebhookSelfLogin', () => {
+  it('derives <slug>[bot] from a resolved App slug', () => {
+    expect(resolveWebhookSelfLogin('my-app')).toBe('my-app[bot]')
+    expect(resolveWebhookSelfLogin('  my-app  ')).toBe('my-app[bot]')
+  })
+  it('returns null for a missing/blank slug so the caller refuses to start (self-loop guard)', () => {
+    // A null result must NOT collapse to the literal string 'undefined[bot]',
+    // which would silently disable the self-comment filter.
+    expect(resolveWebhookSelfLogin(undefined)).toBeNull()
+    expect(resolveWebhookSelfLogin(null)).toBeNull()
+    expect(resolveWebhookSelfLogin('')).toBeNull()
+    expect(resolveWebhookSelfLogin('   ')).toBeNull()
+  })
+})
+
+describe('loadAppConfig', () => {
+  const full = {
+    CLAUDE_GITHUB_APP_ID: '123',
+    CLAUDE_GITHUB_APP_PRIVATE_KEY: '-----BEGIN KEY-----\nabc\n-----END KEY-----',
+    CLAUDE_GITHUB_APP_INSTALLATION_ID: '456',
+    CLAUDE_GITHUB_WEBHOOK_SECRET: 's3cr3t',
+  }
+  it('parses a complete credential set', () => {
+    const cfg = loadAppConfig(full)
+    expect(cfg.appId).toBe('123')
+    expect(cfg.installationId).toBe(456)
+    expect(cfg.webhookSecret).toBe('s3cr3t')
+  })
+  it('unescapes a single-line PEM with literal \\n escapes', () => {
+    const cfg = loadAppConfig({ ...full, CLAUDE_GITHUB_APP_PRIVATE_KEY: 'line1\\nline2\\nline3' })
+    expect(cfg.privateKey).toBe('line1\nline2\nline3')
+  })
+  it('preserves an already-multiline PEM verbatim', () => {
+    const cfg = loadAppConfig(full)
+    expect(cfg.privateKey).toBe('-----BEGIN KEY-----\nabc\n-----END KEY-----')
+  })
+  it('lists every missing key in the error', () => {
+    expect(() => loadAppConfig({})).toThrow(/CLAUDE_GITHUB_APP_ID.*CLAUDE_GITHUB_APP_PRIVATE_KEY.*CLAUDE_GITHUB_APP_INSTALLATION_ID.*CLAUDE_GITHUB_WEBHOOK_SECRET/)
+  })
+  it('rejects a non-numeric or non-positive installation id', () => {
+    expect(() => loadAppConfig({ ...full, CLAUDE_GITHUB_APP_INSTALLATION_ID: 'abc' })).toThrow(/installation/i)
+    expect(() => loadAppConfig({ ...full, CLAUDE_GITHUB_APP_INSTALLATION_ID: '0' })).toThrow(/positive integer/)
+  })
+})
+
+describe('createAppClient', () => {
+  // A real RSA key so @octokit/auth-app construction is exercised; no network
+  // call is made until a request is issued, so this stays a pure unit test.
+  const { privateKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  })
+  const cfg = { appId: '123', privateKey, installationId: 456, webhookSecret: 's' }
+
+  it('builds a client satisfying GitHubClientLike (outbound tool surface)', () => {
+    const client = createAppClient(cfg)
+    expect(typeof client.rest.issues.createComment).toBe('function')
+    expect(typeof client.rest.issues.updateComment).toBe('function')
+    expect(typeof client.rest.issues.listComments).toBe('function')
+    expect(typeof client.rest.issues.listCommentsForRepo).toBe('function')
+    expect(typeof client.rest.reactions.createForIssueComment).toBe('function')
+  })
+  it('does not throw at construction for a well-formed config', () => {
+    expect(() => createAppClient(cfg)).not.toThrow()
+  })
+})
+
+describe('verifyWebhookSignature', () => {
+  const secret = 'topsecret'
+  const sign = (body: string): string => `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+
+  it('accepts a signature computed from the same secret + body', () => {
+    const body = '{"action":"created"}'
+    expect(verifyWebhookSignature(secret, sign(body), body)).toBe(true)
+  })
+  it('verifies raw bytes, including unicode and newlines', () => {
+    const body = '{"body":"héllo\nwörld 🚀"}'
+    expect(verifyWebhookSignature(secret, sign(body), Buffer.from(body))).toBe(true)
+  })
+  it('rejects a wrong secret', () => {
+    const body = '{"action":"created"}'
+    const forged = `sha256=${createHmac('sha256', 'other').update(body).digest('hex')}`
+    expect(verifyWebhookSignature(secret, forged, body)).toBe(false)
+  })
+  it('rejects a tampered body', () => {
+    expect(verifyWebhookSignature(secret, sign('{"a":1}'), '{"a":2}')).toBe(false)
+  })
+  it('rejects missing / malformed / wrong-length headers without throwing', () => {
+    const body = 'x'
+    expect(verifyWebhookSignature(secret, undefined, body)).toBe(false)
+    expect(verifyWebhookSignature(secret, null, body)).toBe(false)
+    expect(verifyWebhookSignature(secret, '', body)).toBe(false)
+    expect(verifyWebhookSignature(secret, 'sha1=deadbeef', body)).toBe(false)
+    expect(verifyWebhookSignature(secret, 'sha256=tooshort', body)).toBe(false)
+    expect(verifyWebhookSignature('', sign(body), body)).toBe(false) // no secret
+  })
+})
+
+describe('messageFromIssueCommentEvent', () => {
+  const base = {
+    action: 'created',
+    comment: { id: 99, body: 'hi @bot', html_url: 'https://gh/c/99', created_at: '2026-05-30T00:00:00Z', user: { login: 'alice', id: 7 } },
+    issue: { number: 42 },
+    repository: { full_name: 'acme/app' },
+  }
+  it('maps a created issue comment', () => {
+    const msg = messageFromIssueCommentEvent(base)
+    expect(msg).toEqual({
+      repo: 'acme/app',
+      issueNumber: 42,
+      commentId: 99,
+      user: 'alice',
+      userId: 7,
+      body: 'hi @bot',
+      htmlUrl: 'https://gh/c/99',
+      createdAt: '2026-05-30T00:00:00Z',
+      commentType: 'issue',
+    })
+  })
+  it('marks a PR-conversation comment as commentType pr', () => {
+    const msg = messageFromIssueCommentEvent({ ...base, issue: { number: 42, pull_request: { url: 'https://gh/pulls/42' } } })
+    expect(msg?.commentType).toBe('pr')
+  })
+  it('defaults userId to 0 when absent (parity with poll)', () => {
+    const msg = messageFromIssueCommentEvent({ ...base, comment: { ...base.comment, user: { login: 'alice' } } })
+    expect(msg?.userId).toBe(0)
+  })
+  it('returns null for non-created actions', () => {
+    expect(messageFromIssueCommentEvent({ ...base, action: 'edited' })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, action: 'deleted' })).toBeNull()
+  })
+  it('returns null when required fields are missing', () => {
+    expect(messageFromIssueCommentEvent({ action: 'created' })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, comment: { ...base.comment, user: null } })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, repository: null })).toBeNull()
+    expect(messageFromIssueCommentEvent({ ...base, issue: null })).toBeNull()
+  })
+})
+
+describe('webhook receiver', () => {
+  const SECRET = 'whsecret'
+  const OPEN_ACCESS = { mode: 'open' as const, allowedLogins: [], configured: true }
+
+  function makeCtx(overrides: Partial<Record<string, unknown>> = {}): { ctx: any, emitted: GitHubMessage[] } {
+    const emitted: GitHubMessage[] = []
+    const ctx = {
+      secret: SECRET,
+      watched: WATCHED,
+      handle: 'bot',
+      selfLogin: 'mybot',
+      dedup: new Dedup(),
+      loadAccess: () => OPEN_ACCESS,
+      emit: (m: GitHubMessage) => emitted.push(m),
+      ...overrides,
+    }
+    return { ctx, emitted }
+  }
+
+  const commentEvent = (over: Record<string, unknown> = {}): string => JSON.stringify({
+    action: 'created',
+    comment: { id: 555, body: 'please @bot help', html_url: 'https://gh/c/555', created_at: '2026-05-30T01:00:00Z', user: { login: 'alice', id: 3 } },
+    issue: { number: 42 },
+    repository: { full_name: 'acme/app' },
+    ...over,
+  })
+
+  function signedRequest(body: string, opts: { event?: string, sign?: boolean, method?: string, path?: string } = {}): Request {
+    const { event = 'issue_comment', sign = true, method = 'POST', path = WEBHOOK_PATH } = opts
+    const headers: Record<string, string> = { 'x-github-event': event }
+    if (sign)
+      headers['x-hub-signature-256'] = `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`
+    return new Request(`http://localhost${path}`, { method, headers, body: method === 'GET' ? undefined : body })
+  }
+
+  it('emits a mentioning, allowlisted, non-self comment and returns 200', async () => {
+    const { ctx, emitted } = makeCtx()
+    const res = await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    expect(res.status).toBe(200)
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0].commentId).toBe(555)
+    expect(emitted[0].user).toBe('alice')
+  })
+
+  it('produces the same channel meta a polled comment would (AC-6)', async () => {
+    const { ctx, emitted } = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    const meta = buildChannelMeta(emitted[0])
+    expect(meta).toMatchObject({
+      chat_id: 'acme/app#42',
+      message_id: '555',
+      user: 'alice',
+      repo: 'acme/app',
+      issue_number: '42',
+      comment_type: 'issue',
+    })
+  })
+
+  it('dedupes redelivery of the same comment id', async () => {
+    const { ctx, emitted } = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    await handleWebhookRequest(signedRequest(commentEvent()), ctx)
+    expect(emitted).toHaveLength(1)
+  })
+
+  it('ignores (200, no emit) comments without the mention, from self, unwatched repo, or non-allowlisted sender', async () => {
+    const noMention = makeCtx()
+    expect((await handleWebhookRequest(signedRequest(commentEvent({ comment: { id: 1, body: 'no ping', html_url: 'h', created_at: 't', user: { login: 'alice', id: 1 } } })), noMention.ctx)).status).toBe(200)
+    expect(noMention.emitted).toHaveLength(0)
+
+    const fromSelf = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent({ comment: { id: 2, body: '@bot hi', html_url: 'h', created_at: 't', user: { login: 'mybot', id: 9 } } })), fromSelf.ctx)
+    expect(fromSelf.emitted).toHaveLength(0)
+
+    const unwatched = makeCtx()
+    await handleWebhookRequest(signedRequest(commentEvent({ repository: { full_name: 'other/repo' } })), unwatched.ctx)
+    expect(unwatched.emitted).toHaveLength(0)
+
+    const denied = makeCtx({ loadAccess: () => ({ mode: 'allowlist' as const, allowedLogins: ['bob'], configured: true }) })
+    await handleWebhookRequest(signedRequest(commentEvent()), denied.ctx)
+    expect(denied.emitted).toHaveLength(0)
+  })
+
+  it('acknowledges non-issue_comment events (e.g. ping) with 200 and no emit', async () => {
+    const { ctx, emitted } = makeCtx()
+    const res = await handleWebhookRequest(signedRequest(JSON.stringify({ zen: 'hi' }), { event: 'ping' }), ctx)
+    expect(res.status).toBe(200)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('rejects a forged/unsigned payload with 401 and never emits', async () => {
+    const { ctx, emitted } = makeCtx()
+    const unsigned = await handleWebhookRequest(signedRequest(commentEvent(), { sign: false }), ctx)
+    expect(unsigned.status).toBe(401)
+    const body = commentEvent()
+    const forged = new Request(`http://localhost${WEBHOOK_PATH}`, { method: 'POST', headers: { 'x-github-event': 'issue_comment', 'x-hub-signature-256': 'sha256=deadbeef' }, body })
+    expect((await handleWebhookRequest(forged, ctx)).status).toBe(401)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('returns 404 for a wrong path and 405 for a wrong method', async () => {
+    const { ctx } = makeCtx()
+    expect((await handleWebhookRequest(signedRequest(commentEvent(), { path: '/nope' }), ctx)).status).toBe(404)
+    expect((await handleWebhookRequest(signedRequest(commentEvent(), { method: 'GET' }), ctx)).status).toBe(405)
+  })
+
+  it('returns 400 for a correctly-signed issue_comment with invalid JSON', async () => {
+    const { ctx } = makeCtx()
+    const res = await handleWebhookRequest(signedRequest('{not json'), ctx)
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects an oversized payload with 413 before verifying or emitting', async () => {
+    const { ctx, emitted } = makeCtx({ maxBodyBytes: 16 })
+    const body = commentEvent() // well over 16 bytes
+    const res = await handleWebhookRequest(signedRequest(body), ctx)
+    expect(res.status).toBe(413)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('rejects on a spoofed oversized Content-Length without buffering', async () => {
+    const { ctx } = makeCtx({ maxBodyBytes: 16 })
+    const req = new Request(`http://localhost${WEBHOOK_PATH}`, {
+      method: 'POST',
+      headers: { 'x-github-event': 'issue_comment', 'content-length': '999999999' },
+      body: 'tiny',
+    })
+    expect((await handleWebhookRequest(req, ctx)).status).toBe(413)
+  })
+
+  it('processIssueCommentEvent returns the emitted message or null', () => {
+    const { ctx } = makeCtx()
+    const msg = processIssueCommentEvent(JSON.parse(commentEvent()), ctx)
+    expect(msg?.commentId).toBe(555)
+    expect(processIssueCommentEvent({ action: 'edited' }, ctx)).toBeNull()
+  })
+
+  it('startWebhookServer binds an ephemeral port and stops cleanly', () => {
+    const { ctx } = makeCtx()
+    const handle = startWebhookServer(ctx, 0)
+    expect(handle.port).toBeGreaterThan(0)
+    expect(() => handle.stop()).not.toThrow()
+  })
+})
+
+describe('parseTunnelUrl', () => {
+  it('extracts a trycloudflare URL from a log line', () => {
+    expect(parseTunnelUrl('2026-05-30 INF |  https://red-sky-1234.trycloudflare.com  |')).toBe('https://red-sky-1234.trycloudflare.com')
+  })
+  it('finds the URL mid-line among other text', () => {
+    expect(parseTunnelUrl('Your quick Tunnel: https://abc-def.trycloudflare.com (expires soon)')).toBe('https://abc-def.trycloudflare.com')
+  })
+  it('returns null when no URL is present', () => {
+    expect(parseTunnelUrl('INF Starting tunnel')).toBeNull()
+    expect(parseTunnelUrl('https://example.com/not-cloudflare')).toBeNull()
+  })
+})
+
+describe('cloudflaredArgs', () => {
+  it('builds quick-tunnel args', () => {
+    expect(cloudflaredArgs({ mode: 'quick', localPort: 8123 })).toEqual(['tunnel', '--url', 'http://localhost:8123'])
+  })
+  it('builds named-tunnel args with run <name>', () => {
+    expect(cloudflaredArgs({ mode: 'named', localPort: 8123, name: 'mytun', hostname: 'gh.example.com' }))
+      .toEqual(['tunnel', '--url', 'http://localhost:8123', 'run', 'mytun'])
+  })
+})
+
+describe('startTunnel', () => {
+  function fakeChild(): any {
+    const child: any = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    child.kill = () => {
+      child.killed = true
+      return true
+    }
+    return child
+  }
+
+  it('resolves with the parsed URL for a quick tunnel', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child })
+    child.stderr.emit('data', Buffer.from('INF |  https://wind-tree-77.trycloudflare.com  |\n'))
+    const handle = await p
+    expect(handle.url).toBe('https://wind-tree-77.trycloudflare.com')
+    handle.stop()
+    expect(child.killed).toBe(true)
+  })
+
+  it('resolves with the configured hostname when a named tunnel registers', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'named', localPort: 9001, name: 't', hostname: 'gh.example.com' }, { spawn: () => child })
+    child.stderr.emit('data', Buffer.from('INF Registered tunnel connection connIndex=0\n'))
+    const handle = await p
+    expect(handle.url).toBe('https://gh.example.com')
+  })
+
+  it('rejects when the named config is incomplete', async () => {
+    await expect(startTunnel({ mode: 'named', localPort: 9001 })).rejects.toThrow(/named tunnel requires/)
+  })
+
+  it('rejects if cloudflared exits before becoming ready', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child })
+    child.emit('exit', 1)
+    await expect(p).rejects.toThrow(/exited before the tunnel was ready/)
+  })
+
+  it('rejects on a readiness timeout', async () => {
+    const child = fakeChild()
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, { spawn: () => child, readyTimeoutMs: 15 })
+    await expect(p).rejects.toThrow(/did not become ready/)
+    expect(child.killed).toBe(true)
+  })
+
+  it('invokes onTunnelDown if cloudflared exits AFTER becoming ready', async () => {
+    const child = fakeChild()
+    let downCode: number | null | undefined
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, {
+      spawn: () => child,
+      onTunnelDown: (code) => { downCode = code },
+    })
+    child.stderr.emit('data', Buffer.from('https://up-tunnel.trycloudflare.com\n'))
+    await p
+    child.emit('exit', 137)
+    expect(downCode).toBe(137)
+  })
+
+  it('does NOT invoke onTunnelDown when the tunnel is stopped intentionally', async () => {
+    const child = fakeChild()
+    let called = false
+    const p = startTunnel({ mode: 'quick', localPort: 9001 }, {
+      spawn: () => child,
+      onTunnelDown: () => { called = true },
+    })
+    child.stderr.emit('data', Buffer.from('https://up-tunnel.trycloudflare.com\n'))
+    const handle = await p
+    handle.stop()
+    child.emit('exit', 0)
+    expect(called).toBe(false)
+  })
+})
+
+describe('webhookDeliveryUrl', () => {
+  it('joins base + path, trimming trailing slashes', () => {
+    expect(webhookDeliveryUrl('https://x.trycloudflare.com')).toBe('https://x.trycloudflare.com/webhook')
+    expect(webhookDeliveryUrl('https://x.trycloudflare.com/')).toBe('https://x.trycloudflare.com/webhook')
+    expect(webhookDeliveryUrl('https://gh.example.com', '/gh')).toBe('https://gh.example.com/gh')
+  })
+})
+
+describe('registerWebhookUrl', () => {
+  function appClient(impl?: (p: unknown) => Promise<unknown>): { client: any, calls: unknown[] } {
+    const calls: unknown[] = []
+    const client = {
+      rest: { apps: { updateWebhookConfigForApp: async (p: unknown) => {
+        calls.push(p)
+        return impl ? impl(p) : {}
+      } } },
+    }
+    return { client, calls }
+  }
+
+  it('updates the App webhook config with the delivery URL + secret', async () => {
+    const { client, calls } = appClient()
+    const url = await registerWebhookUrl(client, 'https://x.trycloudflare.com', 's3cr3t')
+    expect(url).toBe('https://x.trycloudflare.com/webhook')
+    expect(calls[0]).toEqual({ url: 'https://x.trycloudflare.com/webhook', secret: 's3cr3t', content_type: 'json' })
+  })
+
+  it('is idempotent across repeated registrations', async () => {
+    const { client, calls } = appClient()
+    await registerWebhookUrl(client, 'https://x.trycloudflare.com', 's')
+    await registerWebhookUrl(client, 'https://x.trycloudflare.com', 's')
+    expect(calls).toHaveLength(2)
+  })
+
+  it('wraps API failures in a clear error without leaking the secret', async () => {
+    const { client } = appClient(() => Promise.reject(new Error('403 Forbidden')))
+    const err = await registerWebhookUrl(client, 'https://x.trycloudflare.com', 'supersecret').catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/failed to register webhook URL/)
+    expect((err as Error).message).not.toContain('supersecret')
+  })
+})
+
+describe('startWebhookTransport', () => {
+  function wiring(): any {
+    return {
+      appCfg: { appId: '1', privateKey: 'k', installationId: 2, webhookSecret: 'sec' },
+      appClient: {},
+      repos: WATCHED,
+      handle: 'bot',
+      selfLogin: 'bot[bot]',
+      dedup: new Dedup(),
+      loadAccess: () => ({ mode: 'open' as const, allowedLogins: [], configured: true }),
+      emit: () => {},
+      port: 8765,
+      tunnel: { mode: 'quick' as const, localPort: 8765 },
+    }
+  }
+
+  function trackedServer(onStop: () => void): () => { port: number, stop: () => void } {
+    return () => ({
+      port: 8765,
+      stop: onStop,
+    })
+  }
+
+  it('binds the receiver, brings up the tunnel, then registers — in that order', async () => {
+    const order: string[] = []
+    const runtime = await startWebhookTransport(wiring(), {
+      startServer: () => {
+        order.push('server')
+        return { port: 8765, stop: () => {} }
+      },
+      startTunnel: async () => {
+        order.push('tunnel')
+        return { url: 'https://x.trycloudflare.com', stop: () => {} }
+      },
+      registerWebhookUrl: async (_c, base) => {
+        order.push('register')
+        return `${base}/webhook`
+      },
+    })
+    expect(order).toEqual(['server', 'tunnel', 'register'])
+    expect(runtime.deliveryUrl).toBe('https://x.trycloudflare.com/webhook')
+  })
+
+  it('stops the local server and rethrows if the tunnel fails to start', async () => {
+    let stopped = false
+    const promise = startWebhookTransport(wiring(), {
+      startServer: trackedServer(() => { stopped = true }),
+      startTunnel: async () => { throw new Error('cloudflared missing') },
+      registerWebhookUrl: async (_c, base) => `${base}/webhook`,
+    })
+    await expect(promise).rejects.toThrow(/cloudflared missing/)
+    expect(stopped).toBe(true)
+  })
+
+  it('stops the local server if registration fails', async () => {
+    let stopped = false
+    const promise = startWebhookTransport(wiring(), {
+      startServer: trackedServer(() => { stopped = true }),
+      startTunnel: async () => ({ url: 'https://x.trycloudflare.com', stop: () => {} }),
+      registerWebhookUrl: async () => { throw new Error('403') },
+    })
+    await expect(promise).rejects.toThrow(/403/)
+    expect(stopped).toBe(true)
   })
 })
 
@@ -657,6 +1185,40 @@ describe('github channel server (mcp stdio)', () => {
     }
     finally {
       client.kill()
+      rmSync(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails fast in webhook mode when App credentials are missing', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'gh-channel-itest-'))
+    // Spawn with an isolated HOME so no real ~/.claude/channels/github/.env leaks in.
+    const proc = spawn('bun', [SERVER_PATH], {
+      env: {
+        ...process.env,
+        HOME: stateDir,
+        CLAUDE_GITHUB_STATE_DIR: stateDir,
+        CLAUDE_GITHUB_TRANSPORT: 'webhook',
+        CLAUDE_GITHUB_REPOS: 'acme/app',
+        CLAUDE_GITHUB_TOKEN: '',
+        CLAUDE_GITHUB_APP_ID: '',
+        CLAUDE_GITHUB_APP_PRIVATE_KEY: '',
+        CLAUDE_GITHUB_APP_INSTALLATION_ID: '',
+        CLAUDE_GITHUB_WEBHOOK_SECRET: '',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    try {
+      let stderr = ''
+      proc.stderr.on('data', (c: Buffer) => {
+        stderr += c.toString()
+      })
+      const code: number = await new Promise(resolve => proc.on('exit', c => resolve(c ?? -1)))
+      expect(code).not.toBe(0)
+      expect(stderr).toMatch(/webhook transport requires/)
+      expect(stderr).toMatch(/CLAUDE_GITHUB_APP_ID/)
+    }
+    finally {
+      proc.kill()
       rmSync(stateDir, { recursive: true, force: true })
     }
   })
