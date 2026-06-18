@@ -1,0 +1,21 @@
+.mise.toml
+  s_cf931ced427d5a::t_39c4487d800197 2
+package.json
+  s_cf931ced427d5a::t_c93bcc7e297aaa 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.8",
+  "base_commit_sha": "aa955e9c162f666164a4d6c2004fe01aa39a14a5",
+  "prompts": {},
+  "sessions": {
+    "s_cf931ced427d5a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7cd919d2-3adf-432c-a3a3-607c485db1fa",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Minsu Lee <minsu.lee@pleaseai.dev>"
+    }
+  }
+}
