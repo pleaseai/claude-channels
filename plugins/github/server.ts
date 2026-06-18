@@ -583,7 +583,7 @@ export async function handleWebhookRequest(req: Request, ctx: WebhookContext): P
     return new Response('payload too large', { status: 413 })
 
   const raw = await req.text()
-  if (raw.length > maxBytes)
+  if (Buffer.byteLength(raw, 'utf8') > maxBytes)
     return new Response('payload too large', { status: 413 })
   if (!verifyWebhookSignature(ctx.secret, req.headers.get('x-hub-signature-256'), raw))
     return new Response('invalid signature', { status: 401 })
@@ -848,14 +848,18 @@ export async function startWebhookTransport(cfg: WebhookWiringConfig, deps: Webh
   }
   const serverHandle = startServer(ctx, cfg.port)
   log(`webhook receiver listening on :${serverHandle.port}${WEBHOOK_PATH}`)
+  let tunnelHandle: TunnelHandle | undefined
   try {
-    const tunnelHandle = await startTunnelFn(cfg.tunnel, {})
+    tunnelHandle = await startTunnelFn(cfg.tunnel, {})
     log(`tunnel up at ${tunnelHandle.url}`)
     const deliveryUrl = await register(cfg.appClient as unknown as AppWebhookClientLike, tunnelHandle.url, cfg.appCfg.webhookSecret)
     log(`registered webhook delivery URL ${deliveryUrl}`)
     return { serverHandle, tunnelHandle, deliveryUrl }
   }
   catch (err) {
+    // Tear down in reverse order of startup so neither the listener nor the
+    // cloudflared subprocess is leaked when tunnel bring-up or registration fails.
+    tunnelHandle?.stop()
     serverHandle.stop()
     throw err
   }

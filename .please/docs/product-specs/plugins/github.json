@@ -15,7 +15,7 @@
     {
       "id": "REQ-001",
       "kind": "functional",
-      "statement": "**Transport selection.** A config/env switch (e.g.",
+      "statement": "**Transport selection.** A config/env switch (e.g. `CLAUDE_GITHUB_TRANSPORT=poll|webhook`) selects the inbound transport. Unset/invalid → `poll` (current behavior). Selecting `webhook` activates the GitHub App + webhook + tunnel path.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -23,7 +23,7 @@
     {
       "id": "REQ-002",
       "kind": "functional",
-      "statement": "**GitHub App authentication.** In webhook mode, authenticate as a",
+      "statement": "**GitHub App authentication.** In webhook mode, authenticate as a GitHub App using app id, private key, and installation id supplied via config (`~/.claude/channels/github/.env`). Installation tokens are obtained/refreshed for outbound REST calls (comment/react/edit) — replacing the PAT in this mode.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -31,7 +31,7 @@
     {
       "id": "REQ-003",
       "kind": "functional",
-      "statement": "**Manual App provisioning.** The user creates the GitHub App in the",
+      "statement": "**Manual App provisioning.** The user creates the GitHub App in the GitHub UI and supplies credentials (app id, private key, installation id, webhook secret). The channel consumes them; it does **not** create the App. A `/github:configure`-style path documents the required values.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -39,7 +39,7 @@
     {
       "id": "REQ-004",
       "kind": "functional",
-      "statement": "**Local webhook receiver.** Run a local HTTP server that accepts",
+      "statement": "**Local webhook receiver.** Run a local HTTP server that accepts GitHub webhook POSTs on a dedicated path, independent of the MCP stdio transport (stdout stays reserved for MCP; logging stays on stderr).",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -47,7 +47,7 @@
     {
       "id": "REQ-005",
       "kind": "functional",
-      "statement": "**Signature verification.** Every inbound request is verified against",
+      "statement": "**Signature verification.** Every inbound request is verified against the configured webhook secret (`X-Hub-Signature-256`, HMAC-SHA256). Requests with a missing, malformed, or mismatched signature are rejected (HTTP 401/400) and never enter the pipeline.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -55,7 +55,7 @@
     {
       "id": "REQ-006",
       "kind": "functional",
-      "statement": "**Event handling — `issue_comment`.** Handle `issue_comment` events",
+      "statement": "**Event handling — `issue_comment`.** Handle `issue_comment` events (covering both issue and PR conversation comments). Map each to the existing inbound pipeline: mention match (`mentionsHandle`), self-author filter, sender gating (`isAllowed`/`access.json`), dedup (`Dedup` by comment id), and `emit` as a `notifications/claude/channel` event with the same `<channel>` meta shape as poll mode. Non-`created` actions (edited/deleted) and non-matching events are ignored.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -63,7 +63,7 @@
     {
       "id": "REQ-007",
       "kind": "functional",
-      "statement": "**Cloudflare tunnel — quick (default).** Spawn `cloudflared` to create",
+      "statement": "**Cloudflare tunnel — quick (default).** Spawn `cloudflared` to create an ephemeral TryCloudflare tunnel (no CF account), parse the assigned `https://*.trycloudflare.com` URL from its output, and route it to the local receiver.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -71,7 +71,7 @@
     {
       "id": "REQ-008",
       "kind": "functional",
-      "statement": "**Cloudflare tunnel — named (configurable).** When named-tunnel config",
+      "statement": "**Cloudflare tunnel — named (configurable).** When named-tunnel config is supplied (CF account/credentials + hostname), run `cloudflared` against that named tunnel for a stable public URL instead of a quick tunnel.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -79,7 +79,7 @@
     {
       "id": "REQ-009",
       "kind": "functional",
-      "statement": "**Webhook URL auto-registration.** On startup, after the tunnel URL is",
+      "statement": "**Webhook URL auto-registration.** On startup, after the tunnel URL is known, update the GitHub App's webhook config (URL + secret) via the GitHub API so ephemeral quick-tunnel URLs work with no manual step. The registered path matches the local receiver path.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -87,7 +87,7 @@
     {
       "id": "REQ-010",
       "kind": "functional",
-      "statement": "**Tunnel lifecycle management.** The `cloudflared` subprocess is",
+      "statement": "**Tunnel lifecycle management.** The `cloudflared` subprocess is spawned, its readiness/URL detected, monitored while running, and terminated cleanly on channel shutdown. Startup fails loudly (stderr + non-zero exit or documented degradation) if the tunnel cannot be established.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -95,7 +95,7 @@
     {
       "id": "REQ-011",
       "kind": "functional",
-      "statement": "**Outbound parity.** `reply`, `react`, `edit_message`, and",
+      "statement": "**Outbound parity.** `reply`, `react`, `edit_message`, and `fetch_messages` work identically in webhook mode, authenticated via the App installation token, preserving outbound gating (`isWatchedRepo`).",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -103,7 +103,7 @@
     {
       "id": "REQ-012",
       "kind": "non-functional",
-      "statement": "**Non-breaking.** With `CLAUDE_GITHUB_TRANSPORT` unset, behavior is",
+      "statement": "**Non-breaking.** With `CLAUDE_GITHUB_TRANSPORT` unset, behavior is byte-for-byte the current poll path; no existing env var or state file meaning changes.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -111,7 +111,7 @@
     {
       "id": "REQ-013",
       "kind": "non-functional",
-      "statement": "**Security invariants preserved.** Sender gating on commenter login,",
+      "statement": "**Security invariants preserved.** Sender gating on commenter login, outbound gating on watched repos, atomic state writes under `~/.claude/channels/github/`, secrets at mode `0600`, and stderr-only logging all hold in webhook mode. Webhook bodies are treated as untrusted input.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -119,7 +119,7 @@
     {
       "id": "REQ-014",
       "kind": "non-functional",
-      "statement": "**Testability.** Transport selection, signature verification, event→",
+      "statement": "**Testability.** Transport selection, signature verification, event→message mapping, tunnel-URL parsing, and webhook registration are unit-testable with mocked subprocess/HTTP/Octokit boundaries. Target >80% coverage for new code.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
@@ -127,7 +127,7 @@
     {
       "id": "REQ-015",
       "kind": "non-functional",
-      "statement": "**Single-file convention.** Implementation stays within the plugin's",
+      "statement": "**Single-file convention.** Implementation stays within the plugin's single-file `server.ts` pattern (no cross-plugin imports), consistent with the existing channel architecture.",
       "source_tracks": [
         "github-app-webhook-20260530"
       ]
