@@ -376,6 +376,19 @@ export function resolveHandle(mention: string | undefined, selfLogin: string): s
 }
 
 /**
+ * Derive the App's bot login (`<slug>[bot]`) from the authenticated App slug, or
+ * null when the slug is missing/blank. The caller MUST refuse to start on null:
+ * an empty or garbage selfLogin disables the self-comment filter (an incoming
+ * `login` never equals selfLogin), which can loop the bot replying to its own
+ * @mentions and exhaust the rate budget. Centralizing the guard here keeps the
+ * "undefined slug" case out of the runServer string-templating footgun.
+ */
+export function resolveWebhookSelfLogin(slug: string | undefined | null): string | null {
+  const trimmed = slug?.trim()
+  return trimmed ? `${trimmed}[bot]` : null
+}
+
+/**
  * Resolve the inbound transport from an env string. Anything other than
  * "webhook" (case-insensitive) — including unset — yields "poll", so existing
  * deployments stay on the polling path unless they explicitly opt in. The
@@ -616,6 +629,11 @@ export interface WebhookServerHandle {
 export function startWebhookServer(ctx: WebhookContext, port: number): WebhookServerHandle {
   const server = Bun.serve({
     port,
+    // Bind to loopback only — the cloudflared tunnel reaches the receiver via
+    // http://localhost, so there is no reason to expose the port on every
+    // interface (Bun.serve defaults to 0.0.0.0). Keeps the unauthenticated
+    // endpoint off the LAN; the tunnel remains the sole public path.
+    hostname: '127.0.0.1',
     fetch: (req: Request) => handleWebhookRequest(req, ctx),
   })
   return { port: server.port ?? port, stop: () => server.stop(true) }
@@ -1321,7 +1339,7 @@ async function runServer(): Promise<void> {
   try {
     if (transport === 'webhook') {
       const app = await (client as unknown as Octokit).rest.apps.getAuthenticated()
-      selfLogin = `${app.data?.slug}[bot]`
+      selfLogin = resolveWebhookSelfLogin(app.data?.slug) ?? ''
     }
     else {
       const me = await (client as unknown as Octokit).rest.users.getAuthenticated()
@@ -1336,7 +1354,7 @@ async function runServer(): Promise<void> {
   // Refuse to run without a resolved identity: an empty selfLogin disables the
   // self-comment filter (login === selfLogin never matches), which can loop the
   // bot replying to its own @mentions and exhaust the rate budget.
-  if (!selfLogin || selfLogin === 'undefined[bot]') {
+  if (!selfLogin) {
     process.stderr.write('github channel: could not resolve authenticated identity — refusing to start (self-loop risk)\n')
     process.exit(1)
   }

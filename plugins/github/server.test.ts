@@ -37,6 +37,7 @@ const {
   nextBackoffDelay,
   resolveHandle,
   resolveTransport,
+  resolveWebhookSelfLogin,
   loadAppConfig,
   createAppClient,
   verifyWebhookSignature,
@@ -249,6 +250,21 @@ describe('resolveTransport', () => {
   it('falls back to poll for unrecognized values', () => {
     expect(resolveTransport('socket')).toBe('poll')
     expect(resolveTransport('webhooks')).toBe('poll')
+  })
+})
+
+describe('resolveWebhookSelfLogin', () => {
+  it('derives <slug>[bot] from a resolved App slug', () => {
+    expect(resolveWebhookSelfLogin('my-app')).toBe('my-app[bot]')
+    expect(resolveWebhookSelfLogin('  my-app  ')).toBe('my-app[bot]')
+  })
+  it('returns null for a missing/blank slug so the caller refuses to start (self-loop guard)', () => {
+    // A null result must NOT collapse to the literal string 'undefined[bot]',
+    // which would silently disable the self-comment filter.
+    expect(resolveWebhookSelfLogin(undefined)).toBeNull()
+    expect(resolveWebhookSelfLogin(null)).toBeNull()
+    expect(resolveWebhookSelfLogin('')).toBeNull()
+    expect(resolveWebhookSelfLogin('   ')).toBeNull()
   })
 })
 
